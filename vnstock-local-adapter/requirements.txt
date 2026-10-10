@@ -1,0 +1,6 @@
+vnai @ https://files.pythonhosted.org/packages/1f/34/7f419ef6661009006fbc149f4fca26159b7f56d9836b6cb9c170c3c0c465/vnai-2.6.1-py3-none-any.whl
+vnstock @ git+https://github.com/thinh-vu/vnstock.git@v4.0.4
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+python-dotenv>=1.0,<2.0
+pandas>=2.0,<4.0

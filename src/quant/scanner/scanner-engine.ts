@@ -1,0 +1,148 @@
+import type { OHLCV } from "@/models/market"
+import type { MarketDataProvider } from "@/data/providers/market-data-provider"
+import { calculateFeatures } from "@/quant/features"
+import { calculateHoldSignal } from "@/quant/hold"
+import { calculateMarketRegime } from "@/quant/regime"
+import { calculateTplusSignal } from "@/quant/tplus"
+import type { ScannerConfig, ScannerError, ScannerProgress, ScannerRow, ScannerRunResult, TplusScannerRow, HoldScannerRow } from "./types"
+import type { MarketRegimeSnapshot } from "@/quant/regime"
+
+const DEFAULT_CONCURRENCY = 4
+
+function calculateAverageValue20(data: OHLCV[]) {
+  const values = data.slice(-20).map((bar) => Number.isFinite(bar.value) ? bar.value! : bar.close * bar.volume)
+  if (!values.length) return 0
+  return values.reduce((sum, value) => sum + value, 0) / values.length
+}
+
+function normalizeSymbols(symbols: string[]) {
+  return [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean))]
+}
+
+function matchesUniverse(row: ScannerRow, config: ScannerConfig) {
+  const universe = config.universe
+  if (!universe) return true
+  if (row.averageValue20 < universe.minAverageValue20) return false
+  if (universe.exchanges?.length && !universe.exchanges.includes(row.company.exchange)) return false
+  if (universe.sectors?.length && !universe.sectors.includes(row.company.sector)) return false
+  return true
+}
+
+export function filterAndRankRows(rows: ScannerRow[], config: ScannerConfig) {
+  const filtered = rows.filter((row) => row.status === "SUCCESS" && matchesUniverse(row, config)).filter((row) => {
+    if (row.engine === "TPLUS") {
+      const rules = config.tplus
+      if (!row.signal || (rules?.minScore != null && row.signal.score < rules.minScore)) return false
+      if (rules?.actions?.length && !rules.actions.includes(row.signal.action)) return false
+      if (rules?.setups?.length && !rules.setups.includes(row.signal.setup)) return false
+      if (rules?.regimes?.length && !rules.regimes.includes(row.signal.marketRegime)) return false
+      return true
+    }
+    const rules = config.hold
+    if (!row.signal || (rules?.minScore != null && row.signal.score < rules.minScore)) return false
+    if (rules?.actions?.length && !rules.actions.includes(row.signal.action)) return false
+    return true
+  })
+
+  return [...filtered].sort((a, b) => {
+    const scoreA = a.signal?.score ?? -Infinity
+    const scoreB = b.signal?.score ?? -Infinity
+    if (scoreB !== scoreA) return scoreB - scoreA
+    return b.averageValue20 - a.averageValue20
+  })
+}
+
+async function runConcurrent<T>(items: string[], concurrency: number, task: (item: string) => Promise<T>): Promise<T[]> {
+  const results: T[] = new Array(items.length)
+  let cursor = 0
+  const worker = async () => {
+    while (true) {
+      const index = cursor++
+      if (index >= items.length) return
+      results[index] = await task(items[index])
+    }
+  }
+  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), Math.max(1, items.length)) }, worker)
+  await Promise.all(workers)
+  return results
+}
+
+function makeScannerError(symbol: string, error: unknown): ScannerError {
+  const message = error instanceof Error ? error.message : "Unknown scanner error"
+  const code = message.startsWith("OFFLINE_") ? "OFFLINE" : message.startsWith("CORS_") ? "CORS" : "DATA_ERROR"
+  return { symbol, code, message }
+}
+
+async function loadMarketContext(provider: MarketDataProvider, mode: ScannerConfig["mode"]): Promise<{ regime: MarketRegimeSnapshot; indexData: OHLCV[] }> {
+  const indexData = await provider.getMarketIndex("VNINDEX", { timeframe: "1D", cacheMode: mode === "FORCE_REFRESH" ? "force-refresh" : mode === "CACHE_ONLY" ? "cache-only" : "default" })
+  if (indexData.length < 60) throw new Error("MARKET_CONTEXT_INSUFFICIENT_HISTORY")
+  return { indexData, regime: calculateMarketRegime({ indexData, indexSymbol: "VNINDEX" }) }
+}
+
+function progressBase(total: number): ScannerProgress {
+  return { total, processed: 0, success: 0, failed: 0, cached: 0, fresh: 0 }
+}
+
+export async function scanUniverse(provider: MarketDataProvider, config: ScannerConfig, onProgress?: (progress: ScannerProgress) => void): Promise<ScannerRunResult> {
+  const symbols = normalizeSymbols(config.symbols)
+  if (!symbols.length) throw new Error("SCANNER_EMPTY_UNIVERSE")
+  const concurrency = config.concurrency ?? DEFAULT_CONCURRENCY
+  const mode = config.mode ?? "DEFAULT"
+  const marketContext = await loadMarketContext(provider, mode)
+  const regime = marketContext.regime
+  const progress = progressBase(symbols.length)
+  const errors: ScannerError[] = []
+  const allRows: ScannerRow[] = []
+
+  const results = await runConcurrent(symbols, concurrency, async (symbol) => {
+    try {
+      const [company, prices] = await Promise.all([
+        provider.getCompanyInfo(symbol),
+        provider.getHistoricalPrices({ symbol, timeframe: "1D", cacheMode: mode === "FORCE_REFRESH" ? "force-refresh" : mode === "CACHE_ONLY" ? "cache-only" : "default" }),
+      ])
+      if (prices.length < 60) throw new Error("INSUFFICIENT_HISTORY")
+      const features = calculateFeatures(prices, { benchmark: marketContext.indexData })
+      const averageValue20 = calculateAverageValue20(prices)
+      if (config.engine === "TPLUS") {
+        const engine = calculateTplusSignal({ data: prices, features, regime })
+        const row: TplusScannerRow = { engine: "TPLUS", symbol, company, averageValue20, status: "SUCCESS", signal: engine.signal, feature: features.snapshot }
+        progress.success += 1
+        return row
+      }
+      const fundamentals = await provider.getFundamentals(symbol)
+      const engine = calculateHoldSignal({ company, fundamentals, features, data: prices })
+      const row: HoldScannerRow = { engine: "HOLD", symbol, company, averageValue20, status: "SUCCESS", signal: engine.signal, fundamentals, feature: features.snapshot }
+      progress.success += 1
+      return row
+    } catch (error) {
+      const scanError = makeScannerError(symbol, error)
+      errors.push(scanError)
+      progress.failed += 1
+      return {
+        engine: config.engine,
+        symbol,
+        company: { symbol, name: symbol, exchange: "HOSE", sector: "Other" },
+        averageValue20: 0,
+        status: "FAILED",
+        error: scanError.message,
+      } as ScannerRow
+    } finally {
+      progress.processed += 1
+      onProgress?.({ ...progress })
+    }
+  })
+
+  allRows.push(...results)
+  const ranked = filterAndRankRows(allRows, config)
+  return {
+    engine: config.engine,
+    providerId: provider.id,
+    generatedAt: new Date().toISOString(),
+    rows: ranked,
+    errors,
+    progress: { ...progress },
+    marketRegime: regime,
+    dataMode: mode === "CACHE_ONLY" ? "CACHED" : "LIVE",
+    universeSource: config.universeSource ?? "CONFIGURED",
+  }
+}

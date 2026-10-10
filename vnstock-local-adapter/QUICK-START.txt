@@ -1,0 +1,18 @@
+VNStock Local Adapter quick start (Windows PowerShell)
+
+1) Open a second PowerShell terminal and cd into this folder.
+2) Run:
+   py -3.12 -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   python -m pip install --upgrade pip
+   pip install -r requirements.txt
+3) Configure key once (if not already configured in the VNStock Python environment):
+   python setup_vnstock_key.py
+4) Start:
+   uvicorn main:app --host 127.0.0.1 --port 8000
+5) In the React app Settings:
+   Base URL: http://127.0.0.1:8000
+   Auth Scheme: No auth
+   Keep default paths, Save, Test Connection, then Fetch Sample with HAH.
+
+Do NOT paste the VNStock library key into the React API Key field. The key belongs in the Python environment.

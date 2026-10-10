@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "strict": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": [
+    "src/models/market.ts",
+    "src/indicators/**/*.ts",
+    "src/data/providers/market-data-provider.ts",
+    "src/quant/features/**/*.ts",
+    "src/quant/regime/**/*.ts",
+    "src/quant/tplus/**/*.ts",
+    "src/quant/hold/**/*.ts",
+    "src/quant/scanner/types.ts",
+    "src/quant/scanner/scanner-engine.ts"
+  ]
+}

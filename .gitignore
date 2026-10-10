@@ -1,0 +1,14 @@
+node_modules
+dist
+.vite
+.env
+.env.*
+!.env.example
+coverage
+.DS_Store
+
+# Python / Vercel functions
+__pycache__/
+*.py[cod]
+.venv/
+venv/
