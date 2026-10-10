@@ -28,6 +28,14 @@ for _directory in ("/tmp/.cache", "/tmp/.config", "/tmp/vnstock"):
 _configured_key_digest: str | None = None
 
 
+def _error_label(error: Exception) -> str:
+    """Return safe diagnostic type plus missing module, without secrets."""
+    if isinstance(error, ModuleNotFoundError):
+        missing_module = getattr(error, "name", None) or "unknown-module"
+        return f"ModuleNotFoundError:{missing_module}"
+    return type(error).__name__
+
+
 def default_start(days: int = 400) -> str:
     return (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
 
@@ -278,7 +286,7 @@ def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
                 return bars
             errors.append(f"{label}:empty")
         except Exception as error:
-            errors.append(f"{label}:{type(error).__name__}")
+            errors.append(f"{label}:{_error_label(error)}")
 
     raise RuntimeError(
         f"VNStock could not return history for {symbol}. Tried: "
@@ -312,7 +320,7 @@ def fetch_company(symbol: str) -> dict[str, Any]:
             }
         errors.append("Unified:empty")
     except Exception as error:
-        errors.append(f"Unified:{type(error).__name__}")
+        errors.append(f"Unified:{_error_label(error)}")
 
     try:
         from vnstock import Company
@@ -341,7 +349,7 @@ def fetch_company(symbol: str) -> dict[str, Any]:
                 "source": f"vnstock:{source}",
             }
         except Exception as error:
-            errors.append(f"{source}:{type(error).__name__}")
+            errors.append(f"{source}:{_error_label(error)}")
     raise RuntimeError("VNStock company overview unavailable. Tried: " + ", ".join(errors))
 
 
@@ -367,7 +375,7 @@ def fetch_fundamentals(symbol: str) -> dict[str, Any]:
         if not raw_records:
             errors.append("Unified:empty ratios")
     except Exception as error:
-        errors.append(f"Unified:{type(error).__name__}")
+        errors.append(f"Unified:{_error_label(error)}")
 
     for source in (() if raw_records else ("VCI", "KBS")):
         try:
@@ -381,7 +389,7 @@ def fetch_fundamentals(symbol: str) -> dict[str, Any]:
                 break
             errors.append(f"{source}:empty ratios")
         except Exception as error:
-            errors.append(f"{source}:{type(error).__name__}")
+            errors.append(f"{source}:{_error_label(error)}")
 
     metric_aliases = {
         "roe": ("roe", "return on equity"),
