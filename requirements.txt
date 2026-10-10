@@ -1,5 +1,2 @@
-# Vercel installs Python dependencies from this root-level manifest.
-# VNStock's PyPI project is currently marked quarantined; this pins a specific
-# upstream GitHub commit for review instead of resolving an unpinned latest ref.
-# Review the upstream source and licensing before merging/deploying.
-vnstock @ git+https://github.com/thinh-vu/vnstock.git@88825be3f9aab729362e6fca178eb6e9ae4d3f88
+vnai @ https://files.pythonhosted.org/packages/1f/34/7f419ef6661009006fbc149f4fca26159b7f56d9836b6cb9c170c3c0c465/vnai-2.6.1-py3-none-any.whl
+vnstock @ git+https://github.com/thinh-vu/vnstock.git@v4.0.4
