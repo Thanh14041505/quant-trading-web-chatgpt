@@ -1,5 +1,4 @@
 import { clientCache } from "@/data/cache/client-cache"
-import { DEFAULT_CACHE_POLICIES } from "@/models/cache"
 import type { ScannerConfig, ScannerRunResult } from "./types"
 
 function stable(value: unknown): string {
