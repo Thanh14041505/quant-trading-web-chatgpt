@@ -133,7 +133,6 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
   })
 
   allRows.push(...results)
-  const ranked = filterAndRankRows(allRows, config)
   return {
     schemaVersion: 2,
     engine: config.engine,
