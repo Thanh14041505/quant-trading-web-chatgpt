@@ -105,13 +105,13 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
       const averageValue20 = calculateAverageValue20(prices)
       if (config.engine === "TPLUS") {
         const engine = calculateTplusSignal({ data: prices, features, regime })
-        const row: TplusScannerRow = { engine: "TPLUS", symbol, company, averageValue20, status: "SUCCESS", signal: engine.signal, feature: features.snapshot }
+        const row: TplusScannerRow = { engine: "TPLUS", symbol, company, averageValue20, status: "SUCCESS", signal: engine.signal, feature: features.snapshot, history: prices, featureDetails: features }
         progress.success += 1
         return row
       }
       const fundamentals = await provider.getFundamentals(symbol)
       const engine = calculateHoldSignal({ company, fundamentals, features, data: prices })
-      const row: HoldScannerRow = { engine: "HOLD", symbol, company, averageValue20, status: "SUCCESS", signal: engine.signal, fundamentals, feature: features.snapshot }
+      const row: HoldScannerRow = { engine: "HOLD", symbol, company, averageValue20, status: "SUCCESS", signal: engine.signal, fundamentals, feature: features.snapshot, history: prices, featureDetails: features }
       progress.success += 1
       return row
     } catch (error) {
@@ -133,12 +133,15 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
   })
 
   allRows.push(...results)
-  const ranked = filterAndRankRows(allRows, config)
   return {
+    schemaVersion: 2,
     engine: config.engine,
     providerId: provider.id,
     generatedAt: new Date().toISOString(),
-    rows: ranked,
+    rows: allRows,
+    requestedSymbols: symbols,
+    scanConfig: { ...config, mode: undefined },
+    marketIndexHistory: marketContext.indexData,
     errors,
     progress: { ...progress },
     marketRegime: regime,

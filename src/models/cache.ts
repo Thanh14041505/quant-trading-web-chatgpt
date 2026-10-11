@@ -55,6 +55,6 @@ export const DEFAULT_CACHE_POLICIES: Record<CacheEntryKind, CachePolicy> = {
   marketIndex: { ttlMs: 15 * 60_000, allowStaleWhenOffline: true },
   companyInfo: { ttlMs: 7 * 24 * 60 * 60_000, allowStaleWhenOffline: true },
   fundamentals: { ttlMs: 24 * 60 * 60_000, allowStaleWhenOffline: true },
-  scannerResults: { ttlMs: 10 * 60_000, allowStaleWhenOffline: true },
+  scannerResults: { ttlMs: 30 * 24 * 60 * 60_000, allowStaleWhenOffline: true },
   backtestResults: { ttlMs: 24 * 60 * 60_000, allowStaleWhenOffline: true },
 }
