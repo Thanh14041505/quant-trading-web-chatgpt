@@ -79,7 +79,7 @@ export interface ScannerProgress {
 
 export interface ScannerRunResult {
   /** Increment when the persisted snapshot/export schema changes. */
-  schemaVersion: 2
+  schemaVersion?: 2
   engine: ScannerEngine
   providerId: string
   generatedAt: string
