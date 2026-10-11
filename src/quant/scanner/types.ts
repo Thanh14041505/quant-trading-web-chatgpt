@@ -1,5 +1,5 @@
-import type { CompanyInfo, FundamentalData } from "@/models/market"
-import type { FeatureSnapshot } from "@/indicators/types"
+import type { CompanyInfo, FundamentalData, OHLCV } from "@/models/market"
+import type { FeatureEngineResult, FeatureSnapshot } from "@/indicators/types"
 import type { MarketRegimeSnapshot } from "@/quant/regime"
 import type { TradingSignal } from "@/quant/tplus"
 import type { HoldSignal } from "@/quant/hold"
@@ -40,6 +40,13 @@ export interface ScannerRowBase {
   status: ScannerResultStatus
   error?: string
   feature?: FeatureSnapshot
+  /** Full price history and indicator series retained for detail-level Excel exports. */
+  history?: OHLCV[]
+  featureDetails?: FeatureEngineResult
+  fundamentals?: FundamentalData
+  tplusSignal?: TradingSignal
+  holdSignal?: HoldSignal
+  detailWarnings?: string[]
 }
 
 export interface TplusScannerRow extends ScannerRowBase {
@@ -71,10 +78,16 @@ export interface ScannerProgress {
 }
 
 export interface ScannerRunResult {
+  /** Increment when the persisted snapshot/export schema changes. */
+  schemaVersion: 2
   engine: ScannerEngine
   providerId: string
   generatedAt: string
+  /** Includes every symbol scanned, including failures, not only visible ranked rows. */
   rows: ScannerRow[]
+  requestedSymbols: string[]
+  scanConfig: ScannerConfig
+  marketIndexHistory?: OHLCV[]
   errors: ScannerError[]
   progress: ScannerProgress
   marketRegime?: MarketRegimeSnapshot
