@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { PageHeader } from "@/components/common/page-header"
 import { useScanner } from "@/hooks/useScanner"
+import { exportScannerExcel } from "@/quant/scanner/export-excel"
 import { filterAndRankRows } from "@/quant/scanner"
 import type { HoldScannerRow, ScannerConfig } from "@/quant/scanner"
 
@@ -52,7 +53,7 @@ export function HoldPage() {
   }, [action, config, exchange, minLiquidity, minScore, result, search, sector])
 
   return <div className="space-y-6">
-    <PageHeader eyebrow="Longer horizon" title="Hold Scanner" description="3+ month quality, growth, valuation and long-term trend ranking over the configured symbol universe, with sector-aware fundamentals." actions={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => { setSearch(""); setAction("ALL"); setSector("ALL") }}><XCircle className="size-3.5" /> Reset filters</Button><Button size="sm" onClick={() => void run(true)} disabled={isLoading}><RefreshCw className={`size-3.5 ${isLoading ? "animate-spin" : ""}`} /> {isLoading ? "Scanning…" : "Refresh scan"}</Button></div>} />
+    <PageHeader eyebrow="Longer horizon" title="Hold Scanner" description="3+ month quality, growth, valuation and long-term trend ranking over the configured symbol universe, with sector-aware fundamentals." actions={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => { setSearch(""); setAction("ALL"); setSector("ALL") }}><XCircle className="size-3.5" /> Reset filters</Button>{result && <Button variant="outline" size="sm" onClick={() => exportScannerExcel(result)}><span className="text-xs">Export Excel</span></Button>}<Button size="sm" onClick={() => void run(true)} disabled={isLoading}><RefreshCw className={`size-3.5 ${isLoading ? "animate-spin" : ""}`} /> {isLoading ? "Scanning…" : "Scan again"}</Button></div>} />
 
     <Card><CardContent className="space-y-4 p-4">
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
