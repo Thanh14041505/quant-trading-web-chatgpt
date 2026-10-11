@@ -27,7 +27,7 @@ export async function writeScannerCache(providerId: string, config: ScannerConfi
   return clientCache.set({
     kind: "scannerResults",
     providerId,
-    ttlMs: DEFAULT_CACHE_POLICIES.scannerResults.ttlMs,
+    ttlMs: 30 * 24 * 60 * 60_000,
     payload,
     keyParts: { extra: `${config.engine}|${stable({ ...config, mode: undefined })}` },
     metadata: { source: "scanner", engine: config.engine },
