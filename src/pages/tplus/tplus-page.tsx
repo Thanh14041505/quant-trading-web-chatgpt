@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { PageHeader } from "@/components/common/page-header"
 import { useScanner } from "@/hooks/useScanner"
+import { exportScannerExcel } from "@/quant/scanner/export-excel"
 import { filterAndRankRows } from "@/quant/scanner"
 import type { ScannerConfig, TplusScannerRow } from "@/quant/scanner"
 import type { TplusAction } from "@/quant/tplus"
@@ -97,7 +98,7 @@ export function TplusPage() {
       eyebrow="Short-term engine"
       title="T+ Scanner"
       description="3–15 session setup detection, ranking and risk planning over the configured symbol universe. Scanner results are cached client-side."
-      actions={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => { setSearch(""); setSetup("ALL"); setAction("ALL"); setExchange("ALL"); setSector("ALL"); setMinScore("0"); setMinLiquidity("5000000000") }}><XCircle className="size-3.5" /> Reset filters</Button><Button size="sm" onClick={() => void run(true)} disabled={isLoading}><RefreshCw className={`size-3.5 ${isLoading ? "animate-spin" : ""}`} /> {isLoading ? "Scanning…" : "Refresh scan"}</Button></div>}
+      actions={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => { setSearch(""); setSetup("ALL"); setAction("ALL"); setExchange("ALL"); setSector("ALL"); setMinScore("0"); setMinLiquidity("5000000000") }}><XCircle className="size-3.5" /> Reset filters</Button>{result && <Button variant="outline" size="sm" onClick={() => exportScannerExcel(result)}><span className="text-xs">Export Excel</span></Button>}<Button size="sm" onClick={() => void run(true)} disabled={isLoading}><RefreshCw className={`size-3.5 ${isLoading ? "animate-spin" : ""}`} /> {isLoading ? "Scanning…" : "Scan again"}</Button></div>}
     />
 
     <Card>
