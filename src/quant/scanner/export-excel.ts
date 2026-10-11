@@ -1,4 +1,4 @@
-import type { ScannerRunResult, ScannerRow } from "./types"
+import type { ScannerRunResult } from "./types"
 
 type Flat = Record<string, unknown>
 function flatten(value: unknown, prefix = "", out: Flat = {}): Flat {
