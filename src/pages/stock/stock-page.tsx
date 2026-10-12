@@ -445,7 +445,13 @@ export function StockPage() {
         <div><div className="mb-2 text-xs font-semibold">Valuation</div><MetricGrid items={fundamentalGroups.valuation} /></div>
         <div><div className="mb-2 text-xs font-semibold">Balance sheet & cash flow</div><MetricGrid items={fundamentalGroups.balance} /></div>
         <div><div className="mb-2 text-xs font-semibold">Sector-specific metrics · {sector}</div><MetricGrid items={sectorGroup} /></div>
-        <div className="text-[10px] leading-4 text-[var(--app-text-muted)]">Large financial values use compact notation only (K/M/B/T); the currency and raw scale depend on the provider's schema. Confirm provider units before comparing across sources.</div>
+        <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-panel-muted)] p-3 text-[10px] leading-4 text-[var(--app-text-muted)]">
+          <div>Source: {fundamentals?.source ?? provider.name} · Latest report period: {fundamentals?.latestPeriod ?? "N/A"}</div>
+          <div>Sector valuation benchmark: {fundamentals?.sectorBenchmarkScope === "CURRENT_HOLD_SCAN_UNIVERSE" ? `current Hold scan universe (${fundamentals.sectorPeerCount ?? 0} peers)` : "not available from provider"}</div>
+          <div>Available report periods — ratios: {fundamentals?.reportedPeriods?.ratios?.join(", ") || "N/A"}; income: {fundamentals?.reportedPeriods?.incomeStatement?.join(", ") || "N/A"}; balance sheet: {fundamentals?.reportedPeriods?.balanceSheet?.join(", ") || "N/A"}; cash flow: {fundamentals?.reportedPeriods?.cashFlow?.join(", ") || "N/A"}.</div>
+          <div className="mt-1">Large financial values use compact notation only (K/M/B/T); currency and raw scale depend on provider schema. Missing fields remain N/A; derived values are only calculated when source rows and denominators are available.</div>
+          {fundamentals?.notes?.length ? <ul className="mt-2 list-disc space-y-1 pl-4">{fundamentals.notes.map((note, index) => <li key={index}>{note}</li>)}</ul> : null}
+        </div>
       </div>
     </Panel>
 
@@ -453,7 +459,11 @@ export function StockPage() {
       <Panel title="Company profile" icon={<Building2 className="size-4" />}>
         <MetricGrid columns="grid-cols-2" items={[
           { label: "Symbol", value: company?.symbol ?? symbol }, { label: "Exchange", value: company?.exchange ?? "N/A" },
-          { label: "Sector", value: company?.sector ?? "N/A" }, { label: "Fundamental record", value: fundamentals ? fundamentals.symbol : "N/A" },
+          { label: "Sector group", value: company?.sector ?? "N/A" }, { label: "Industry", value: company?.industry ?? "N/A" },
+          { label: "ICB code / level", value: company?.industryCode ? `${company.industryCode} / ${company.industryLevel ?? "N/A"}` : "N/A" },
+          { label: "Listing date", value: company?.listingDate?.slice(0, 10) ?? "N/A" },
+          { label: "Issued shares", value: company?.issuedShares != null ? compactText(company.issuedShares) : "N/A" },
+          { label: "Fundamental record", value: fundamentals ? fundamentals.symbol : "N/A" },
         ]} />
       </Panel>
       <Panel title="Catalysts from provider" icon={<TrendingUp className="size-4" />}>
