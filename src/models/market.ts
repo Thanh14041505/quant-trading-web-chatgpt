@@ -14,19 +14,28 @@ export interface CompanyInfo {
   name: string
   exchange: "HOSE" | "HNX" | "UPCOM"
   sector: string
+  industry?: string
+  industryCode?: string
+  industryLevel?: number
+  profileSector?: string
+  sectorSource?: string
+  listingDate?: string
+  issuedShares?: number
 }
 
 export interface FundamentalData {
   symbol: string
+
+  // Profitability / quality ratios (provider units; percentage metrics are percentages).
   roe?: number
   roa?: number
   roic?: number
   grossMargin?: number
   operatingMargin?: number
   netMargin?: number
-  operatingCashFlow?: number
-  freeCashFlow?: number
   interestCoverage?: number
+
+  // Valuation.
   pe?: number
   pb?: number
   evEbitda?: number
@@ -36,13 +45,23 @@ export interface FundamentalData {
   historicalPb?: number
   sectorMedianPe?: number
   sectorMedianPb?: number
+  sectorBenchmarkScope?: string
+  sectorPeerCount?: number
+
+  // Growth.
   revenueGrowth?: number
   epsGrowth?: number
   revenueCagr?: number
   profitCagr?: number
+
+  // Balance sheet / cash flow.
+  operatingCashFlow?: number
+  freeCashFlow?: number
   debtToEquity?: number
   netDebt?: number
   inventory?: number
+
+  // Sector-specific metrics, only populated when supplied by the provider.
   npl?: number
   nim?: number
   provisioning?: number
@@ -52,6 +71,24 @@ export interface FundamentalData {
   proprietaryTradingGrowth?: number
   projectPipeline?: number
   legalStatus?: "Clear" | "Watch" | "At Risk"
+
+  // Provenance and source report coverage.
+  latestPeriod?: string
+  reportedPeriods?: {
+    ratios?: string[]
+    incomeStatement?: string[]
+    balanceSheet?: string[]
+    cashFlow?: string[]
+  }
+  source?: string
+  dataAvailable?: boolean
+  notes?: string[]
+  reports?: {
+    ratios?: Record<string, unknown>[]
+    incomeStatement?: Record<string, unknown>[]
+    balanceSheet?: Record<string, unknown>[]
+    cashFlow?: Record<string, unknown>[]
+  }
   catalysts?: string[]
   risks?: string[]
 }

@@ -226,13 +226,25 @@ export class HttpJsonMarketDataProvider implements MarketDataProvider {
     const record = asRecord(response.payload) ?? asRecord(extractRows(response.payload)[0])
     if (!record) throw new DataProviderError("Provider returned no company object.", "INVALID_DATA", { url: response.url })
     const name = String(pick(record, ["name", "companyName", "company_name"]) ?? symbol.toUpperCase())
-    const exchangeRaw = String(pick(record, ["exchange", "exchangeCode", "floor"]) ?? "HOSE").toUpperCase()
+    const exchangeRaw = String(pick(record, ["exchange", "exchangeCode", "floor"]) ?? "").toUpperCase()
     const exchange: CompanyInfo["exchange"] = exchangeRaw === "HNX" ? "HNX" : exchangeRaw === "UPCOM" ? "UPCOM" : "HOSE"
+    const sector = String(pick(record, ["sectorGroup", "sector_group", "sector", "industry", "industryName"]) ?? "Unknown")
+    const industry = pick(record, ["industry", "industryName", "industry_name", "icb_name"])
+    const industryCode = pick(record, ["industryCode", "industry_code", "icb_code"])
+    const industryLevel = asNumber(pick(record, ["industryLevel", "industry_level", "icb_level"]))
+    const profileSector = pick(record, ["profileSector", "profile_sector"])
+    const sectorSource = pick(record, ["sectorSource", "sector_source"])
+    const listingDate = pick(record, ["listingDate", "listing_date"])
+    const issuedShares = asNumber(pick(record, ["issuedShares", "issued_shares", "issued_share"]))
     return {
-      symbol: symbol.toUpperCase(),
-      name,
-      exchange,
-      sector: String(pick(record, ["sector", "industry", "industryName"]) ?? "Unknown"),
+      symbol: symbol.toUpperCase(), name, exchange, sector,
+      ...(industry != null ? { industry: String(industry) } : {}),
+      ...(industryCode != null ? { industryCode: String(industryCode) } : {}),
+      ...(industryLevel != null ? { industryLevel } : {}),
+      ...(profileSector != null ? { profileSector: String(profileSector) } : {}),
+      ...(sectorSource != null ? { sectorSource: String(sectorSource) } : {}),
+      ...(listingDate != null ? { listingDate: String(listingDate) } : {}),
+      ...(issuedShares != null ? { issuedShares } : {}),
     }
   }
 
@@ -241,16 +253,43 @@ export class HttpJsonMarketDataProvider implements MarketDataProvider {
     const response = await this.requestJson(path, { symbol: symbol.toUpperCase() })
     const record = asRecord(response.payload) ?? asRecord(extractRows(response.payload)[0])
     if (!record) throw new DataProviderError("Provider returned no fundamentals object.", "INVALID_DATA", { url: response.url })
+    const optionalNumber = (...keys: string[]) => asNumber(pick(record, keys))
+    const optionalString = (...keys: string[]) => {
+      const value = pick(record, keys)
+      return value == null ? undefined : String(value)
+    }
+    const optionalArray = (...keys: string[]) => {
+      const value = pick(record, keys)
+      return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined
+    }
     return {
       symbol: symbol.toUpperCase(),
-      roe: asNumber(pick(record, ["roe", "ROE"])),
-      roa: asNumber(pick(record, ["roa", "ROA"])),
-      roic: asNumber(pick(record, ["roic", "ROIC"])),
-      pe: asNumber(pick(record, ["pe", "PE", "p_e"])),
-      pb: asNumber(pick(record, ["pb", "PB", "p_b"])),
-      revenueGrowth: asNumber(pick(record, ["revenueGrowth", "revenue_growth"])),
-      epsGrowth: asNumber(pick(record, ["epsGrowth", "eps_growth"])),
-      debtToEquity: asNumber(pick(record, ["debtToEquity", "debt_to_equity", "d_e"])),
+      roe: optionalNumber("roe", "ROE"), roa: optionalNumber("roa", "ROA"), roic: optionalNumber("roic", "ROIC"),
+      grossMargin: optionalNumber("grossMargin", "gross_margin"), operatingMargin: optionalNumber("operatingMargin", "operating_margin"),
+      netMargin: optionalNumber("netMargin", "net_margin"), operatingCashFlow: optionalNumber("operatingCashFlow", "operating_cash_flow"),
+      freeCashFlow: optionalNumber("freeCashFlow", "free_cash_flow"), interestCoverage: optionalNumber("interestCoverage", "interest_coverage"),
+      pe: optionalNumber("pe", "PE", "p_e"), pb: optionalNumber("pb", "PB", "p_b"), evEbitda: optionalNumber("evEbitda", "ev_ebitda"),
+      peg: optionalNumber("peg", "PEG"), dividendYield: optionalNumber("dividendYield", "dividend_yield"),
+      historicalPe: optionalNumber("historicalPe", "historical_pe"), historicalPb: optionalNumber("historicalPb", "historical_pb"),
+      sectorMedianPe: optionalNumber("sectorMedianPe", "sector_median_pe"), sectorMedianPb: optionalNumber("sectorMedianPb", "sector_median_pb"),
+      revenueGrowth: optionalNumber("revenueGrowth", "revenue_growth"), epsGrowth: optionalNumber("epsGrowth", "eps_growth"),
+      revenueCagr: optionalNumber("revenueCagr", "revenue_cagr"), profitCagr: optionalNumber("profitCagr", "profit_cagr"),
+      debtToEquity: optionalNumber("debtToEquity", "debt_to_equity", "d_e"), netDebt: optionalNumber("netDebt", "net_debt"),
+      inventory: optionalNumber("inventory", "inventories"), npl: optionalNumber("npl", "NPL"), nim: optionalNumber("nim", "NIM"),
+      provisioning: optionalNumber("provisioning", "provisioning_coverage"), casa: optionalNumber("casa", "CASA"),
+      brokerageShareGrowth: optionalNumber("brokerageShareGrowth", "brokerage_share_growth"),
+      marginLendingGrowth: optionalNumber("marginLendingGrowth", "margin_lending_growth"),
+      proprietaryTradingGrowth: optionalNumber("proprietaryTradingGrowth", "proprietary_trading_growth"),
+      projectPipeline: optionalNumber("projectPipeline", "project_pipeline"),
+      legalStatus: (["Clear", "Watch", "At Risk"].includes(String(pick(record, ["legalStatus", "legal_status"]))) ? pick(record, ["legalStatus", "legal_status"]) : undefined) as FundamentalData["legalStatus"],
+      catalysts: optionalArray("catalysts"), risks: optionalArray("risks"),
+      sectorBenchmarkScope: optionalString("sectorBenchmarkScope", "sector_benchmark_scope"),
+      sectorPeerCount: optionalNumber("sectorPeerCount", "sector_peer_count"),
+      latestPeriod: optionalString("latestPeriod", "latest_period"), source: optionalString("source"),
+      dataAvailable: Boolean(pick(record, ["dataAvailable", "data_available"])),
+      notes: optionalArray("notes"),
+      reportedPeriods: asRecord(pick(record, ["reportedPeriods", "reported_periods"])) as FundamentalData["reportedPeriods"],
+      reports: asRecord(pick(record, ["reports"])) as FundamentalData["reports"],
     }
   }
 

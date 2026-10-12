@@ -133,6 +133,41 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
   })
 
   allRows.push(...results)
+
+  // Add peer-relative valuation context from the successful Hold scan itself.
+  // This is explicitly a scanned-universe median, not a market-wide sector median.
+  if (config.engine === "HOLD") {
+    const peerGroups = new Map<string, HoldScannerRow[]>()
+    for (const row of allRows) {
+      if (row.engine !== "HOLD" || row.status !== "SUCCESS" || !row.fundamentals) continue
+      const sector = row.company.sector || "Other"
+      const group = peerGroups.get(sector) ?? []
+      group.push(row)
+      peerGroups.set(sector, group)
+    }
+    const median = (values: number[]) => {
+      const sorted = values.filter(Number.isFinite).sort((a, b) => a - b)
+      if (!sorted.length) return undefined
+      const middle = Math.floor(sorted.length / 2)
+      return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
+    }
+    for (const group of peerGroups.values()) {
+      const peerCount = group.length
+      const pe = median(group.map((row) => row.fundamentals?.pe).filter((value): value is number => value != null && value > 0))
+      const pb = median(group.map((row) => row.fundamentals?.pb).filter((value): value is number => value != null && value > 0))
+      for (const row of group) {
+        if (!row.fundamentals) continue
+        row.fundamentals = {
+          ...row.fundamentals,
+          sectorMedianPe: pe,
+          sectorMedianPb: pb,
+          sectorPeerCount: peerCount,
+          sectorBenchmarkScope: "CURRENT_HOLD_SCAN_UNIVERSE",
+        }
+      }
+    }
+  }
+
   return {
     schemaVersion: 2,
     engine: config.engine,
