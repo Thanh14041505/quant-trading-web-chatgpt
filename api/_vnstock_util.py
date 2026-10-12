@@ -961,6 +961,7 @@ def fetch_fundamentals(symbol: str, include_history: bool = False) -> dict[str, 
             "balanceSheet": balance_records,
             "cashFlow": cash_records,
         }
-    if not include_history and result.get("dataAvailable"):
+    rate_limited = any("RATE_LIMIT" in str(error).upper() or "RATE_LIMIT_COOLDOWN" in str(error).upper() for error in errors)
+    if not include_history and result.get("dataAvailable") and not rate_limited:
         _fundamentals_cache[symbol] = (time.time(), copy.deepcopy(result))
     return result
