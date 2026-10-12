@@ -29,6 +29,10 @@ for _directory in ("/tmp/.cache", "/tmp/.config", "/tmp/vnstock"):
         pass
 
 _configured_key_digest: str | None = None
+_fundamentals_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_FUNDAMENTALS_CACHE_TTL_SECONDS = 6 * 60 * 60
+_rate_limit_until = 0.0
+_RATE_LIMIT_COOLDOWN_SECONDS = 15
 
 
 def _error_label(error: Exception) -> str:
@@ -499,6 +503,9 @@ def _fetch_financial_records(
     periods: tuple[str, ...],
 ) -> tuple[list[dict[str, Any]], str | None, list[str]]:
     """Fetch one statement with bounded fallbacks and stop immediately on rate limiting."""
+    global _rate_limit_until
+    if time.time() < _rate_limit_until:
+        return [], None, ["VNSTOCK_RATE_LIMIT_COOLDOWN"]
     errors: list[str] = []
     try:
         from vnstock import Fundamental
@@ -535,10 +542,15 @@ def _fetch_financial_records(
                             return records, f"vnstock:Fundamental.equity.{method_name}", errors
                         errors.append(f"Unified-{method_name}-{period}:empty")
                     except SystemExit as error:
-                        marker = "RATE_LIMIT:SystemExit" if _is_rate_limit_error(error) else "UPSTREAM_SYSTEM_EXIT"
+                        if _is_rate_limit_error(error):
+                            _rate_limit_until = time.time() + _RATE_LIMIT_COOLDOWN_SECONDS
+                            marker = "RATE_LIMIT:SystemExit"
+                        else:
+                            marker = "UPSTREAM_SYSTEM_EXIT"
                         return [], None, [*errors, f"Unified-{method_name}-{period}:{marker}"]
                     except Exception as error:
                         if _is_rate_limit_error(error):
+                            _rate_limit_until = time.time() + _RATE_LIMIT_COOLDOWN_SECONDS
                             return [], None, [*errors, f"Unified-{method_name}-{period}:RATE_LIMIT:{_error_label(error)}"]
                         errors.append(f"Unified-{method_name}-{period}:{_error_label(error)}")
 
@@ -568,10 +580,15 @@ def _fetch_financial_records(
                 return records, f"vnstock:Finance.{source}.{method_name}", errors
             errors.append(f"{source}-{method_name}-{period}:empty")
         except SystemExit as error:
-            marker = "RATE_LIMIT:SystemExit" if _is_rate_limit_error(error) else "UPSTREAM_SYSTEM_EXIT"
+            if _is_rate_limit_error(error):
+                _rate_limit_until = time.time() + _RATE_LIMIT_COOLDOWN_SECONDS
+                marker = "RATE_LIMIT:SystemExit"
+            else:
+                marker = "UPSTREAM_SYSTEM_EXIT"
             return [], None, [*errors, f"{source}-{method_name}:{marker}"]
         except Exception as error:
             if _is_rate_limit_error(error):
+                _rate_limit_until = time.time() + _RATE_LIMIT_COOLDOWN_SECONDS
                 return [], None, [*errors, f"{source}-{method_name}:RATE_LIMIT:{_error_label(error)}"]
             errors.append(f"{source}-{method_name}:{_error_label(error)}")
     return [], None, errors
@@ -759,9 +776,16 @@ def fetch_company(symbol: str) -> dict[str, Any]:
 
 
 def fetch_fundamentals(symbol: str, include_history: bool = False) -> dict[str, Any]:
-    """Fetch normalized ratios and financial statements; never invent missing values."""
+    """Fetch normalized fundamentals with warm-instance caching and partial results."""
+    global _rate_limit_until
+    import copy
+
     symbol = normalize_symbol(symbol)
     configure_vnstock_key()
+    cached = _fundamentals_cache.get(symbol)
+    now = time.time()
+    if not include_history and cached and now - cached[0] < _FUNDAMENTALS_CACHE_TTL_SECONDS:
+        return copy.deepcopy(cached[1])
 
     ratio_records, ratio_source, ratio_errors = _fetch_financial_records(symbol, "ratio", ("quarter", "year"))
     income_records, income_source, income_errors = _fetch_financial_records(symbol, "income_statement", ("year", "quarter"))
@@ -937,4 +961,6 @@ def fetch_fundamentals(symbol: str, include_history: bool = False) -> dict[str, 
             "balanceSheet": balance_records,
             "cashFlow": cash_records,
         }
+    if not include_history and result.get("dataAvailable"):
+        _fundamentals_cache[symbol] = (time.time(), copy.deepcopy(result))
     return result
