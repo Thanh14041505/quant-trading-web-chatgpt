@@ -15,7 +15,7 @@ class handler(BaseHTTPRequestHandler):
             "vnstock_key_configured": bool(os.getenv("VNSTOCK_API_KEY") or self.headers.get("X-VNSTOCK-KEY")),
             "endpoints": [
                 "/api/health", "/api/ohlcv?symbol=HAH", "/api/market_index?symbol=VNINDEX",
-                "/api/company?symbol=HAH", "/api/fundamentals?symbol=HAH", "/api/scan",
+                "/api/company?symbol=HAH", "/api/fundamentals?symbol=HAH", "/api/sectors", "/api/scan",
             ],
             "note": "Health confirms function availability, not upstream VNStock reachability. Test /api/ohlcv for an upstream smoke test.",
         }, cache_seconds=0)
