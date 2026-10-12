@@ -18,8 +18,42 @@ class handler(BaseHTTPRequestHandler):
                 return
             configure_vnstock_key(key_from_request(self))
             send_json(self, 200, fetch_fundamentals(symbol), cache_seconds=3600)
+        except SystemExit as error:
+            # Some VNStock rate-limit/auth paths terminate with SystemExit, which
+            # is not caught by Exception and otherwise becomes FUNCTION_INVOCATION_FAILED.
+            message = str(error).lower()
+            is_rate_limited = any(token in message for token in (
+                "rate limit", "rate-limit", "too many requests", "60/60",
+                "requests per minute", "wait to retry", "gioi han api",
+            ))
+            if is_rate_limited:
+                send_json(self, 503, {
+                    "error": "VNStock rate limit reached. Please wait before retrying.",
+                    "code": "VNSTOCK_RATE_LIMIT",
+                    "retry_after_seconds": 15,
+                })
+            else:
+                send_json(self, 502, {
+                    "error": "VNStock terminated the fundamentals request unexpectedly.",
+                    "code": "VNSTOCK_UPSTREAM_EXIT",
+                })
         except Exception as error:
-            send_json(self, 502, {"error": str(error)[:320], "code": "VNSTOCK_FUNDAMENTALS_ERROR"})
+            message = str(error).lower()
+            is_rate_limited = any(token in message for token in (
+                "rate limit", "rate-limit", "too many requests", "60/60",
+                "requests per minute", "wait to retry", "gioi han api",
+            ))
+            if is_rate_limited:
+                send_json(self, 503, {
+                    "error": "VNStock rate limit reached. Please wait before retrying.",
+                    "code": "VNSTOCK_RATE_LIMIT",
+                    "retry_after_seconds": 15,
+                })
+            else:
+                send_json(self, 502, {
+                    "error": str(error)[:320],
+                    "code": "VNSTOCK_FUNDAMENTALS_ERROR",
+                })
 
     def do_OPTIONS(self):
         send_options(self)
