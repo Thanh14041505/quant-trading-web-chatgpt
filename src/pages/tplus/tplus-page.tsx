@@ -61,7 +61,7 @@ export function TplusPage() {
   const [action, setAction] = useState("ALL")
   const [exchange, setExchange] = useState("ALL")
   const [sector, setSector] = useState("ALL")
-  const [minLiquidity, setMinLiquidity] = useState("5000000000")
+  const [minLiquidity, setMinLiquidity] = useState("5000000")
 
   const config = useMemo<ScannerConfig>(() => ({
     ...baseConfig,
