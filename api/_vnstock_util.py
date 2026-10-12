@@ -79,6 +79,8 @@ def configure_vnstock_key(api_key: str | None = None) -> str:
         change_api_key(key)
         _configured_key_digest = digest
         return "configured"
+    except SystemExit:
+        return "key-configuration-warning:SystemExit"
     except Exception as current_error:
         # Compatibility with older installs only when register_user accepts a
         # key argument. Never invoke an interactive login prompt in a function.
@@ -94,6 +96,8 @@ def configure_vnstock_key(api_key: str | None = None) -> str:
             register_user(key)
             _configured_key_digest = digest
             return "configured-legacy"
+        except SystemExit:
+            return "key-configuration-warning:SystemExit"
         except Exception:
             # Never return or log the raw key or exception text; callers may
             # still attempt public/guest access if the upstream permits it.
@@ -475,56 +479,101 @@ def _safe_pct(numerator: float | None, denominator: float | None) -> float | Non
     return numerator / denominator * 100.0
 
 
-def _fetch_financial_records(symbol: str, method_name: str, periods: tuple[str, ...]) -> tuple[list[dict[str, Any]], str | None, list[str]]:
+def _is_rate_limit_error(error: Any) -> bool:
+    text = str(error or "").lower()
+    return any(token in text for token in (
+        "rate limit", "rate-limit", "too many requests", "60/60",
+        "requests per minute", "request limit", "gioi han api", "gioi han toi da",
+        "wait to retry", "retry after",
+    ))
+
+
+def _is_rate_limit_marker(message: str) -> bool:
+    text = str(message or "").lower()
+    return "rate_limit" in text or "rate-limit" in text or "rate limited" in text or "rate limit" in text
+
+
+def _fetch_financial_records(
+    symbol: str,
+    method_name: str,
+    periods: tuple[str, ...],
+) -> tuple[list[dict[str, Any]], str | None, list[str]]:
+    """Fetch one statement with bounded fallbacks and stop immediately on rate limiting."""
     errors: list[str] = []
     try:
         from vnstock import Fundamental
-
-        for period in periods:
-            try:
-                equity = Fundamental().equity(symbol)
-                method = getattr(equity, method_name)
-                try:
-                    frame = method(period=period, orient="report")
-                except TypeError:
-                    frame = method(period=period)
-                records = dataframe_to_records(frame)
-                if records:
-                    return records, f"vnstock:Fundamental.equity.{method_name}", errors
-                errors.append(f"Unified-{method_name}-{period}:empty")
-            except Exception as error:
-                errors.append(f"Unified-{method_name}-{period}:{_error_label(error)}")
+    except SystemExit as error:
+        return [], None, [f"Unified-import:{'RATE_LIMIT:SystemExit' if _is_rate_limit_error(error) else 'UPSTREAM_SYSTEM_EXIT'}"]
     except Exception as error:
         errors.append(f"Unified-import:{_error_label(error)}")
+        Fundamental = None  # type: ignore[assignment,misc]
 
-    # v4 legacy provider fallback, kept for deployments pinned to source-specific adapters.
+    if Fundamental is not None:
+        # Reuse one symbol-bound facade per statement and try the preferred period
+        # first. A rate-limit response must never trigger more fallback requests.
+        try:
+            equity = Fundamental().equity(symbol)
+        except SystemExit as error:
+            return [], None, [f"Unified-init:{'RATE_LIMIT:SystemExit' if _is_rate_limit_error(error) else 'UPSTREAM_SYSTEM_EXIT'}"]
+        except Exception as error:
+            errors.append(f"Unified-init:{_error_label(error)}")
+            equity = None
+        if equity is not None:
+            try:
+                method = getattr(equity, method_name)
+            except Exception as error:
+                errors.append(f"Unified-{method_name}-method:{_error_label(error)}")
+            else:
+                for period in periods[:2]:
+                    try:
+                        try:
+                            frame = method(period=period, orient="report")
+                        except TypeError:
+                            frame = method(period=period)
+                        records = dataframe_to_records(frame)
+                        if records:
+                            return records, f"vnstock:Fundamental.equity.{method_name}", errors
+                        errors.append(f"Unified-{method_name}-{period}:empty")
+                    except SystemExit as error:
+                        marker = "RATE_LIMIT:SystemExit" if _is_rate_limit_error(error) else "UPSTREAM_SYSTEM_EXIT"
+                        return [], None, [*errors, f"Unified-{method_name}-{period}:{marker}"]
+                    except Exception as error:
+                        if _is_rate_limit_error(error):
+                            return [], None, [*errors, f"Unified-{method_name}-{period}:RATE_LIMIT:{_error_label(error)}"]
+                        errors.append(f"Unified-{method_name}-{period}:{_error_label(error)}")
+
+    # Legacy fallback remains for version/source compatibility. Each source is
+    # attempted once at the preferred period; fatal/rate-limit errors stop retries.
     try:
         from vnstock import Finance
-
-        for source in ("VCI", "KBS"):
-            try:
-                finance = Finance(source=source, symbol=symbol)
-                method = getattr(finance, "ratio" if method_name in ("ratio", "ratios") else method_name)
-                succeeded = False
-                for period in periods:
-                    try:
-                        frame = method(period=period, lang="en", dropna=True)
-                    except TypeError:
-                        try:
-                            frame = method(period=period)
-                        except TypeError:
-                            frame = method()
-                    records = dataframe_to_records(frame)
-                    if records:
-                        return records, f"vnstock:Finance.{source}.{method_name}", errors
-                    errors.append(f"{source}-{method_name}-{period}:empty")
-                    succeeded = True
-                if not succeeded:
-                    errors.append(f"{source}-{method_name}:empty")
-            except Exception as error:
-                errors.append(f"{source}-{method_name}:{_error_label(error)}")
+    except SystemExit as error:
+        return [], None, [*errors, f"Finance-import:{'RATE_LIMIT:SystemExit' if _is_rate_limit_error(error) else 'UPSTREAM_SYSTEM_EXIT'}"]
     except Exception as error:
-        errors.append(f"Finance-import:{_error_label(error)}")
+        return [], None, [*errors, f"Finance-import:{_error_label(error)}"]
+
+    period = periods[0] if periods else "quarter"
+    for source in ("VCI", "KBS"):
+        try:
+            finance = Finance(source=source, symbol=symbol)
+            method = getattr(finance, "ratio" if method_name in ("ratio", "ratios") else method_name)
+            try:
+                frame = method(period=period, lang="en", dropna=True)
+            except TypeError:
+                try:
+                    frame = method(period=period)
+                except TypeError:
+                    frame = method()
+            records = dataframe_to_records(frame)
+            if records:
+                return records, f"vnstock:Finance.{source}.{method_name}", errors
+            errors.append(f"{source}-{method_name}-{period}:empty")
+        except SystemExit as error:
+            marker = "RATE_LIMIT:SystemExit" if _is_rate_limit_error(error) else "UPSTREAM_SYSTEM_EXIT"
+            return [], None, [*errors, f"{source}-{method_name}:{marker}"]
+        except Exception as error:
+            if _is_rate_limit_error(error):
+                return [], None, [*errors, f"{source}-{method_name}:RATE_LIMIT:{_error_label(error)}"]
+            errors.append(f"{source}-{method_name}:{_error_label(error)}")
     return [], None, errors
 
 
