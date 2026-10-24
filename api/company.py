@@ -19,7 +19,7 @@ class handler(BaseHTTPRequestHandler):
                 return
             configure_vnstock_key(key_from_request(self))
             send_json(self, 200, fetch_company(symbol), cache_seconds=3600)
-        except BaseException as error:
+        except (SystemExit, Exception) as error:
             # Company metadata is auxiliary for T+. Return a normalized N/A
             # record so a company-profile outage cannot block technical scans.
             # Log only the exception type; upstream messages may contain details
