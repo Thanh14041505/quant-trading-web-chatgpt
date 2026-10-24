@@ -7,7 +7,8 @@ type Matrix = CellValue[][]
 const encoder = new TextEncoder()
 
 function xml(value: unknown): string {
-  const text = (value == null ? "" : typeof value === "object" ? JSON.stringify(value) : String(value))
+  const raw: string = value == null ? "" : typeof value === "object" ? (JSON.stringify(value) ?? "") : String(value)
+  const text = raw
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
     .slice(0, 32000)
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;")
