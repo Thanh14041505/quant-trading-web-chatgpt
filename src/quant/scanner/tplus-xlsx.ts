@@ -253,6 +253,7 @@ export function buildTplusXlsx(result: ScannerRunResult): Uint8Array {
     ["Confidence", "Composite heuristic from score, count of positive flags (EMA50/200, CMF+, MACD+, RS20+, candidate) and bull-regime agreement. LOW/MEDIUM/HIGH is not a calibrated win probability."],
     ["Diagnostics-only guardrails", "Separate from strategy score/action: RSI14>75; RS60>40%; RVOL20<0.8; midpoint stop risk>7%; close > Entry High by >3%; structural R<1.6; TP1 > nearest resistance. These flags do not change original score/action/TP/SL."],
     ["RS20/60/120", "Stock own-price returns over 20/60/120 trading bars, in percent."],
+    ["Relative-strength score input", "Current scan uses RS20 for the score: 50 + clamp(RS20*1.5, -20, 25), unless a universe percentile is supplied. This scanner does not pass universe percentiles, so RS60/RS120 are diagnostics only and do not change the current score."],
     ["Excess return", "Stock return less aligned VNINDEX return over same lookback; percentage points."],
     ["TP1 model", "Existing TPLUS_MULTI_SETUP_v1 target is 1.75R in current implementation. The workbook separately reports nearest structural resistance; strategy targets are unchanged."],
     ["R metrics", "Risk/reward is separately reported at Entry Low, midpoint and High because risk changes across the entry zone."],
