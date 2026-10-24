@@ -568,12 +568,19 @@ def _fetch_financial_records(
                         return [], None, [*errors, f"Unified-{method_name}-{period}:{marker}"]
                     except Exception as error:
                         if _is_rate_limit_error(error):
-                            _rate_limit_until = time.time() + _RATE_LIMIT_COOLDOWN_SECONDS
+                            _mark_rate_limit()
                             return [], None, [*errors, f"Unified-{method_name}-{period}:RATE_LIMIT:{_error_label(error)}"]
+                        if _is_timeout_error(error):
+                            return [], None, [*errors, f"Unified-{method_name}-{period}:UPSTREAM_TIMEOUT"]
                         errors.append(f"Unified-{method_name}-{period}:{_error_label(error)}")
 
-    # Legacy fallback remains for version/source compatibility. Each source is
-    # attempted once at the preferred period; fatal/rate-limit errors stop retries.
+    # Do not fan out to legacy Finance when the Unified request reached the
+    # upstream and timed out. That multiplies load during provider incidents.
+    if any("UPSTREAM_TIMEOUT" in item or "RATE_LIMIT" in item for item in errors):
+        return [], None, errors
+
+    # Legacy fallback remains only for import/method compatibility. Each source
+    # is attempted once at the preferred period; fatal errors stop retries.
     try:
         from vnstock import Finance
     except SystemExit as error:
