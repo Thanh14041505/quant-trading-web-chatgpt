@@ -240,13 +240,25 @@ def _is_index_symbol(symbol: str) -> bool:
 
 
 def _fetch_unified_history(symbol: str, start: str, end: str):
-    """Preferred Unified UI used by current VNStock v4+ documentation."""
+    """Fetch daily candles through the VNStock v5 Market API using KBS explicitly.
+
+    In VNStock v5, `Market.index(symbol)` and `Market.equity(symbol)` are
+    factory methods returning asset-specific clients. They are not objects with
+    an `.ohlcv(symbol=...)` method. Calling `market.index.ohlcv` therefore
+    raises AttributeError before any outgoing API request.
+    
+    KBS is selected explicitly so a default-source resolution does not route
+    these historical requests to Vietcap. We intentionally do not fan out to
+    a second provider if KBS fails; the caller returns a clear error instead.
+    """
     from vnstock import Market
 
     market = Market()
     if _is_index_symbol(symbol):
-        return market.index.ohlcv(symbol=symbol, start=start, end=end)
-    return market.equity.ohlcv(symbol=symbol, start=start, end=end)
+        asset = market.index(symbol)
+    else:
+        asset = market.equity(symbol)
+    return asset.ohlcv(start=start, end=end, source="kbs")
 
 
 def _fetch_legacy_history(symbol: str, source: str, start: str, end: str):
