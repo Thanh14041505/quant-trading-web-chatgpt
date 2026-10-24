@@ -71,7 +71,8 @@ const rr = (target: number | undefined, entry: number, stop: number): number | u
 const riskPct = (entry: number, stop: number): number | undefined => entry > stop && entry > 0 ? (entry - stop) / entry * 100 : undefined
 
 function previousHigh(history: OHLCV[], lookback: number): number | undefined {
-  const prior = history.slice(Math.max(0, history.length - lookback - 1), -1)
+  if (history.length <= lookback) return undefined
+  const prior = history.slice(history.length - lookback - 1, -1)
   if (!prior.length) return undefined
   const high = Math.max(...prior.map((bar) => bar.high))
   return Number.isFinite(high) ? high : undefined
