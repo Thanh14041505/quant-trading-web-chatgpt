@@ -156,6 +156,7 @@ function blockingReason(args: {
   lowRvol: boolean
   riskPctAtMid?: number
   entryStatus: EntryZoneStatus
+  distanceToEntryHighPct?: number
   entryHigh?: number
   structuralR?: number
   tp1ExceedsResistance: boolean
@@ -165,7 +166,7 @@ function blockingReason(args: {
   if (args.distribution) return { reason: "STRUCTURE_CONFLICT_DISTRIBUTION", next: "Wait for distribution to resolve; require price structure and continuation evidence to improve." }
   if (args.rsiExtended) return { reason: "RSI_EXTENDED", next: "Avoid chasing; wait for consolidation or a controlled pullback." }
   if (args.rs60Extended) return { reason: "RS60_EXTENDED_MOVE", next: "Review the 60-session move and wait for a new base or pullback." }
-  if (args.entryHigh != null && args.close > args.entryHigh * 1.03) return { reason: "ENTRY_ZONE_MISSED", next: "Do not chase; wait for a newly calculated entry zone." }
+  if (args.distanceToEntryHighPct != null && args.distanceToEntryHighPct > 3) return { reason: "ENTRY_ZONE_MISSED", next: "Do not chase; wait for a newly calculated entry zone." }
   if (args.riskPctAtMid != null && args.riskPctAtMid > 7) return { reason: "WIDE_STOP_OVER_7_PERCENT", next: "Reassess position sizing and whether the setup fits a short T+ horizon." }
   if (args.entryStatus === "BELOW_ENTRY_ZONE") return { reason: "WAIT_FOR_ENTRY_ZONE", next: "Wait for price to reach the planned entry zone; do not buy before the zone." }
   if (args.entryStatus === "ABOVE_ENTRY_ZONE" && args.entryHigh != null) return { reason: "PRICE_ABOVE_ENTRY_ZONE", next: "Wait for a pullback or recalculate the entry zone; do not chase a missed plan." }
@@ -248,6 +249,7 @@ export function buildTplusExecutionDiagnostics(input: Input) {
     lowRvol: lowRvol && ["MOMENTUM_CONTINUATION", "BREAKOUT", "PULLBACK"].includes(setup),
     riskPctAtMid,
     entryStatus: entryZoneStatus,
+    distanceToEntryHighPct,
     entryHigh,
     structuralR: structuralRAtEntryMid,
     tp1ExceedsResistance,
