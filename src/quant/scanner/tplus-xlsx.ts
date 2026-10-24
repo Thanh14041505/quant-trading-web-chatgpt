@@ -71,7 +71,7 @@ function rankedMatrix(rows: ScannerRow[]): Matrix {
       symbol: row.symbol, status: row.status, error: row.error ?? "", companyName: row.company?.name ?? "",
       exchange: row.company?.exchange ?? "", sectorGroup: row.company?.sector ?? "", industry: row.company?.industry ?? "",
       industryCode: row.company?.industryCode ?? "", dataDate: d?.asOfDate ?? f?.date ?? row.history?.at(-1)?.date ?? "",
-      referenceClose: d?.referenceClose ?? f?.close ?? "", averageValue20_VND: row.averageValue20,
+      referenceClose: d?.referenceClose ?? f?.close ?? "", averageValue20_providerNative: row.averageValue20,
       setup: s?.setup ?? "NONE", action: s?.action ?? "NO_SIGNAL", opportunityScore: s?.opportunityScore ?? "",
       tradeQuality: s?.tradeQuality ?? "", confidence: s?.confidence ?? "", marketRegime: s?.marketRegime ?? "",
       RS20_return_pct: f?.relativeStrength.rs20 ?? "", RS60_return_pct: f?.relativeStrength.rs60 ?? "", RS120_return_pct: f?.relativeStrength.rs120 ?? "",
@@ -106,7 +106,7 @@ function rankedMatrix(rows: ScannerRow[]): Matrix {
 function technicalMatrix(rows: ScannerRow[]): Matrix {
   return objectMatrix(rows.map((row) => ({
     symbol: row.symbol, status: row.status, ...flatten(row.feature ?? {}),
-    averageValue20_VND: row.averageValue20, featureWarnings: (row.detailWarnings ?? []).join(" | "),
+    averageValue20_providerNative: row.averageValue20, featureWarnings: (row.detailWarnings ?? []).join(" | "),
   })))
 }
 function scoreMatrix(rows: ScannerRow[]): Matrix {
