@@ -267,47 +267,34 @@ def _is_index_symbol(symbol: str) -> bool:
     return symbol.upper() in {"VNINDEX", "VN30", "HNXINDEX", "UPCOMINDEX"}
 
 
-def _fetch_unified_history(symbol: str, start: str, end: str):
-    """Use the working VNStock 4.0.4 Unified API shape from production."""
+def _fetch_unified_history(symbol: str, start: str, end: str, source: str = "KBS"):
+    """Fetch daily OHLCV through the VNStock 4.0.9 Unified Market API.
+
+    KBS is explicit here because VCI is timing out in the current production
+    logs. Keeping one preferred source avoids a cascade through deprecated
+    Vnstock/Quote adapters when a provider is slow.
+    """
     from vnstock import Market
 
     market = Market()
+    params = {
+        "symbol": symbol,
+        "start": start,
+        "end": end,
+        "interval": "1D",
+        "source": source,
+    }
     if _is_index_symbol(symbol):
-        return market.index.ohlcv(symbol=symbol, start=start, end=end)
-    return market.equity.ohlcv(symbol=symbol, start=start, end=end)
-
-
-def _fetch_legacy_history(symbol: str, source: str, start: str, end: str):
-    """Fallback to the source-specific API used by the existing project."""
-    from vnstock import Vnstock
-
-    stock = Vnstock().stock(symbol=symbol, source=source)
-    return stock.quote.history(start=start, end=end, interval="1D")
-
-
-def _fetch_quote_history(symbol: str, source: str, start: str, end: str):
-    from vnstock import Quote
-
-    quote = Quote(symbol=symbol, source=source)
-    try:
-        return quote.history(start=start, end=end, interval="1D")
-    except TypeError:
-        # Unified v4-style signature from current VNStock examples.
-        try:
-            from vnstock.core.types import TimeFrame
-            return quote.history(start_date=start, end_date=end, resolution=TimeFrame.DAILY)
-        except (ImportError, TypeError):
-            return quote.history(start_date=start, end_date=end)
+        return market.index.ohlcv(**params)
+    return market.equity.ohlcv(**params)
 
 
 def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
-    """Fetch daily OHLCV with the production-compatible VNStock 4.x routes.
+    """Fetch daily OHLCV using bounded, rate-limit-aware source selection.
 
-    The Unified Market API is attempted first. Source-specific VCI/KBS/MSN
-    routes remain bounded fallbacks for symbols/providers that reject the
-    first route. A rate-limit response stops retries immediately to avoid
-    multiplying traffic across a 200+ symbol scan; other provider failures may
-    try the next source before the symbol is marked unavailable.
+    Normal path: one KBS request per symbol. VCI is only tried if KBS rejects
+    the route locally or returns no usable bars. Timeouts and rate limits stop
+    immediately; do not retry the same slow hosts through deprecated adapters.
     """
     global _rate_limit_until
     symbol = normalize_symbol(symbol)
@@ -316,49 +303,61 @@ def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
         raise RuntimeError(f"VNSTOCK_RATE_LIMIT_COOLDOWN: retry after {retry_after} seconds")
 
     configure_vnstock_key()
-    errors: list[str] = []
 
-    fetchers = [("Unified", lambda: _fetch_unified_history(symbol, start, end))]
-    fetchers.extend(
-        (f"{source}-legacy", lambda source=source: _fetch_legacy_history(symbol, source, start, end))
-        for source in ("VCI", "KBS", "MSN")
-    )
-    fetchers.extend(
-        (f"{source}-quote", lambda source=source: _fetch_quote_history(symbol, source, start, end))
-        for source in ("VCI", "KBS", "MSN")
-    )
-
-    for label, fetcher in fetchers:
+    def fetch_one(source: str) -> list[dict[str, Any]]:
         try:
-            frame = fetcher()
-            bars = dataframe_to_bars(frame, symbol)
-            bars = [bar for bar in bars if start <= bar["date"] <= end]
-            if bars:
-                return bars
-            errors.append(f"{label}:empty")
+            frame = _fetch_unified_history(symbol, start, end, source=source)
         except SystemExit as error:
             if _is_rate_limit_error(error):
                 _mark_rate_limit()
                 raise RuntimeError(
                     f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds"
                 ) from None
-            # Try the next provider on a timeout; VCI and KBS are independent
-            # routes and can have different availability for a given symbol.
-            errors.append(f"{label}:{_error_label(error)}")
+            if _is_timeout_error(error):
+                raise RuntimeError(f"VNSTOCK_UPSTREAM_TIMEOUT: {source} OHLCV timed out for {symbol}") from None
+            raise
         except Exception as error:
             if _is_rate_limit_error(error):
                 _mark_rate_limit()
                 raise RuntimeError(
                     f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds"
                 ) from None
-            # Try the next provider on a timeout; VCI and KBS are independent
-            # routes and can have different availability for a given symbol.
-            errors.append(f"{label}:{_error_label(error)}")
+            if _is_timeout_error(error):
+                raise RuntimeError(f"VNSTOCK_UPSTREAM_TIMEOUT: {source} OHLCV timed out for {symbol}") from None
+            if _is_route_rejection(error):
+                raise
+            raise RuntimeError(f"VNSTOCK_HISTORY_ERROR: {source} { _error_label(error) } for {symbol}") from None
 
-    raise RuntimeError(
-        f"VNSTOCK_HISTORY_ERROR: could not fetch OHLCV for {symbol}. "
-        + ", ".join(errors[:6])
-    )
+        bars = dataframe_to_bars(frame, symbol)
+        return [bar for bar in bars if start <= bar["date"] <= end]
+
+    try:
+        bars = fetch_one("KBS")
+    except Exception as primary_error:
+        # Route rejection is raised before provider I/O, so switching to VCI
+        # here does not duplicate a timed-out request or compound quota usage.
+        if not _is_route_rejection(primary_error):
+            raise
+        try:
+            bars = fetch_one("VCI")
+        except Exception as fallback_error:
+            raise RuntimeError(
+                f"VNSTOCK_HISTORY_ERROR: KBS route rejected ({_error_label(primary_error)}); "
+                f"VCI fallback failed ({_error_label(fallback_error)}) for {symbol}"
+            ) from None
+    if bars:
+        return bars
+
+    # Empty KBS output can mean a symbol is not covered by that route. This is
+    # the only non-error fallback; timeouts/rate limits never reach this path.
+    try:
+        bars = fetch_one("VCI")
+    except Exception as error:
+        raise RuntimeError(f"VNSTOCK_EMPTY_HISTORY: KBS returned no bars; VCI fallback failed for {symbol}: {_error_label(error)}") from None
+    if bars:
+        return bars
+    raise RuntimeError(f"VNSTOCK_EMPTY_HISTORY: no daily bars returned for {symbol} from KBS or VCI")
+
 
 def _fold_text(value: Any) -> str:
     import re
