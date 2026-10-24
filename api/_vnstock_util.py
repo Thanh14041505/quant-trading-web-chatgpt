@@ -342,8 +342,8 @@ def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
                 raise RuntimeError(
                     f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds"
                 ) from None
-            if _is_timeout_error(error):
-                raise RuntimeError(f"VNSTOCK_UPSTREAM_TIMEOUT: history request timed out for {symbol}; retry later") from None
+            # Try the next provider on a timeout; VCI and KBS are independent
+            # routes and can have different availability for a given symbol.
             errors.append(f"{label}:{_error_label(error)}")
         except Exception as error:
             if _is_rate_limit_error(error):
@@ -351,8 +351,8 @@ def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
                 raise RuntimeError(
                     f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds"
                 ) from None
-            if _is_timeout_error(error):
-                raise RuntimeError(f"VNSTOCK_UPSTREAM_TIMEOUT: history request timed out for {symbol}; retry later") from None
+            # Try the next provider on a timeout; VCI and KBS are independent
+            # routes and can have different availability for a given symbol.
             errors.append(f"{label}:{_error_label(error)}")
 
     raise RuntimeError(
