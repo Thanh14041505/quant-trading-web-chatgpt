@@ -33,7 +33,7 @@ function columnName(n: number): string {
   return label
 }
 function cell(address: string, value: CellValue): string {
-  if (value == null || value === "") return '<c r="' + address + '"/>'
+  if (value == null || value === "" || (typeof value === "number" && !Number.isFinite(value))) return '<c r="' + address + '"/>'
   if (typeof value === "number" && Number.isFinite(value)) return '<c r="' + address + '"><v>' + value + '</v></c>'
   if (typeof value === "boolean") return '<c r="' + address + '" t="b"><v>' + (value ? 1 : 0) + '</v></c>'
   return '<c r="' + address + '" t="inlineStr"><is><t xml:space="preserve">' + xml(value) + '</t></is></c>'
@@ -205,7 +205,7 @@ export function buildTplusXlsx(result: ScannerRunResult): Uint8Array {
     historySheets.push({ name: sheet === 1 ? "OHLCV History" : "OHLCV History " + sheet, matrix: objectMatrix(bars.slice(offset, offset + maxRows)) })
   }
   if (!historySheets.length) historySheets.push({ name: "OHLCV History", matrix: objectMatrix([]) })
-  const summary: Array<[string, Value]> = [
+  const summary: Array<[string, CellValue]> = [
     ["Generated at", result.generatedAt], ["Provider", result.providerId], ["Data mode", result.dataMode],
     ["Universe source", result.universeSource], ["Requested symbols", result.requestedSymbols?.length ?? rows.length],
     ["Scan configuration", JSON.stringify(result.scanConfig ?? {})], ["Score weights", JSON.stringify(DEFAULT_TPLUS_CONFIG.weights)],
@@ -215,9 +215,9 @@ export function buildTplusXlsx(result: ScannerRunResult): Uint8Array {
     ["Export generation", "Prepared in browser Web Worker after scanning and cached in IndexedDB. Export click only downloads the existing Blob; no Vercel API or recalculation on click."],
     ["Strategy changes", "No score weights, original Action, Entry, SL or TP formula was changed by the diagnostics layer."],
   ]
-  const methodology: Array<[string, Value]> = [
+  const methodology: Array<[string, CellValue]> = [
     ["Strategy version", TPLUS_STRATEGY_VERSION], ["Score weights", JSON.stringify(DEFAULT_TPLUS_CONFIG.weights)],
-    ...Object.entries(DEFAULT_TPLUS_CONFIG.weights).map(([key, value]) => ["weight." + key, value] as [string, Value]),
+    ...Object.entries(DEFAULT_TPLUS_CONFIG.weights).map(([key, value]) => ["weight." + key, value] as [string, CellValue]),
     ["RS20/60/120", "Stock own-price returns over 20/60/120 trading bars, in percent."],
     ["Excess return", "Stock return less aligned VNINDEX return over same lookback; percentage points."],
     ["TP1 model", "Existing TPLUS_MULTI_SETUP_v1 target is 1.75R in current implementation. The workbook separately reports nearest structural resistance; strategy targets are unchanged."],
