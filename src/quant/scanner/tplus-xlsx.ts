@@ -139,12 +139,18 @@ function rawBars(rows: ScannerRow[]): Flat[] {
   })
   return result
 }
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256)
+  for (let n = 0; n < 256; n += 1) {
+    let value = n
+    for (let k = 0; k < 8; k += 1) value = (value & 1) ? (value >>> 1) ^ 0xedb88320 : value >>> 1
+    table[n] = value >>> 0
+  }
+  return table
+})()
 function crc32(bytes: Uint8Array): number {
   let crc = 0xffffffff
-  for (const byte of bytes) {
-    crc ^= byte
-    for (let k = 0; k < 8; k += 1) crc = (crc & 1) ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1
-  }
+  for (const byte of bytes) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8)
   return (crc ^ 0xffffffff) >>> 0
 }
 function u16(view: DataView, offset: number, value: number) { view.setUint16(offset, value, true) }
