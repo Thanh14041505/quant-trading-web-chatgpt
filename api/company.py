@@ -28,7 +28,7 @@ class handler(BaseHTTPRequestHandler):
             fallback_symbol = symbol if symbol and symbol != "N/A" else "N/A"
             send_json(self, 200, {
                 "symbol": fallback_symbol,
-                "name": fallback_symbol,
+                "name": "N/A",
                 "exchange": "N/A",
                 "sector": "N/A",
                 "sectorGroup": "N/A",
