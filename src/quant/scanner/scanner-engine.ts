@@ -28,8 +28,8 @@ function matchesUniverse(row: ScannerRow, config: ScannerConfig) {
   const universe = config.universe
   if (!universe) return true
   if (row.averageValue20 < universe.minAverageValue20) return false
-  if (universe.exchanges?.length && row.company.exchange !== "N/A" && !universe.exchanges.includes(row.company.exchange)) return false
-  if (universe.sectors?.length && !["N/A", "Unknown"].includes(row.company.sector) && !universe.sectors.includes(row.company.sector)) return false
+  if (universe.exchanges?.length && !universe.exchanges.includes(row.company.exchange)) return false
+  if (universe.sectors?.length && !universe.sectors.includes(row.company.sector)) return false
   return true
 }
 
