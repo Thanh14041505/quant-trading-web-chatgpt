@@ -21,7 +21,7 @@ function normalizeSymbols(symbols: string[]) {
 }
 
 function unavailableCompany(symbol: string): CompanyInfo {
-  return { symbol, name: symbol, exchange: "N/A", sector: "N/A" }
+  return { symbol, name: "N/A", exchange: "N/A", sector: "N/A" }
 }
 
 function matchesUniverse(row: ScannerRow, config: ScannerConfig) {
