@@ -48,6 +48,7 @@ export interface TplusExecutionDiagnostics {
   rs60Extended: boolean
   lowRvol: boolean
   liquidityFlag: string
+  liquidityBasis: "PROVIDER_VALUE_FIELD" | "CLOSE_TIMES_VOLUME_FALLBACK"
   weeklyBias: HigherTimeframeBias
   monthlyBias: HigherTimeframeBias
   higherTimeframeRisk: "LOW" | "MEDIUM" | "HIGH"
@@ -166,6 +167,8 @@ function blockingReason(args: {
   if (args.rs60Extended) return { reason: "RS60_EXTENDED_MOVE", next: "Review the 60-session move and wait for a new base or pullback." }
   if (args.entryHigh != null && args.close > args.entryHigh * 1.03) return { reason: "ENTRY_ZONE_MISSED", next: "Do not chase; wait for a newly calculated entry zone." }
   if (args.riskPctAtMid != null && args.riskPctAtMid > 7) return { reason: "WIDE_STOP_OVER_7_PERCENT", next: "Reassess position sizing and whether the setup fits a short T+ horizon." }
+  if (args.entryStatus === "BELOW_ENTRY_ZONE") return { reason: "WAIT_FOR_ENTRY_ZONE", next: "Wait for price to reach the planned entry zone; do not buy before the zone." }
+  if (args.entryStatus === "ABOVE_ENTRY_ZONE" && args.entryHigh != null) return { reason: "PRICE_ABOVE_ENTRY_ZONE", next: "Wait for a pullback or recalculate the entry zone; do not chase a missed plan." }
   if (args.lowRvol) return { reason: "LOW_RVOL", next: "Wait for participation/volume confirmation; do not assume momentum continuation." }
   if (args.tp1ExceedsResistance || (args.structuralR != null && args.structuralR < 1.6)) return { reason: "STRUCTURAL_REWARD_RISK_WEAK", next: "Compare the strategy target with the nearest resistance; require a better entry or a more realistic plan." }
   if (args.action === "BUY") return { reason: "CHECK_EXECUTION_TRIGGER", next: "Confirm trigger and price remain inside the valid entry zone before placing an order." }
@@ -211,7 +214,7 @@ export function buildTplusExecutionDiagnostics(input: Input) {
   const structuralRAtEntryMid = hasEntry && stop != null && resistance.value != null ? rr(resistance.value, entryMid!, stop) : undefined
   const tp1ExceedsNearestResistance = resistance.value != null && tp1 != null && tp1 > resistance.value * 1.01
   const resistanceDistanceFromEntryPct = hasEntry && resistance.value != null ? pct(resistance.value, entryMid!) : undefined
-  const setup = signal.setup ?? "NONE"
+  const setup = candidate?.setup ?? signal.setup ?? "NONE"
   const rsiExtended = snapshot.momentum.rsi14 > 75
   const rs60Extended = snapshot.relativeStrength.rs60 > 40
   const lowRvol = snapshot.volume.rvol20 < 0.8
@@ -302,11 +305,16 @@ export function buildTplusExecutionDiagnostics(input: Input) {
     structuralRAtEntryMid,
     tp1ExceedsNearestResistance,
     resistanceDistanceFromEntryPct,
-    trendStructureConflict: snapshot.trend.aboveEma50 && distribution,
+    trendStructureConflict: snapshot.trend.aboveEma50 && (distribution || weeklyBias === "DOWN" || monthlyBias === "DOWN"),
     rsiExtended,
     rs60Extended,
     lowRvol,
-    liquidityFlag: averageValue20 >= 5_000_000_000 ? "MEETS_APP_5B_THRESHOLD" : "BELOW_APP_5B_THRESHOLD",
+    liquidityFlag: history.slice(-20).length === 20 && history.slice(-20).every((bar) => finite(bar.value))
+      ? "PROVIDER_VALUE_FIELD_AVAILABLE_UNIT_UNVERIFIED"
+      : "VALUE_UNIT_UNVERIFIED_CLOSE_TIMES_VOLUME_FALLBACK",
+    liquidityBasis: history.slice(-20).length === 20 && history.slice(-20).every((bar) => finite(bar.value))
+      ? "PROVIDER_VALUE_FIELD"
+      : "CLOSE_TIMES_VOLUME_FALLBACK",
     weeklyBias,
     monthlyBias,
     higherTimeframeRisk,
