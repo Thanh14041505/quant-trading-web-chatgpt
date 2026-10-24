@@ -152,7 +152,20 @@ export class HttpJsonMarketDataProvider implements MarketDataProvider {
       const latencyMs = Math.round(performance.now() - started)
       const contentType = response.headers.get("content-type") ?? ""
       if (!response.ok) {
-        throw new DataProviderError(`Provider returned HTTP ${response.status}.`, "HTTP_ERROR", { status: response.status, url: url.toString() })
+        let upstreamDetail = ""
+        try {
+          const errorRecord = asRecord(await response.clone().json())
+          if (errorRecord) {
+            const errorCode = pick(errorRecord, ["code", "errorCode", "error_code"])
+            const errorMessage = pick(errorRecord, ["error", "message", "detail"])
+            if (errorMessage != null) {
+              upstreamDetail = ` ${errorCode != null ? String(errorCode) + ": " : ""}${String(errorMessage).slice(0, 220)}`
+            }
+          }
+        } catch {
+          // Non-JSON error bodies are represented by the HTTP status only.
+        }
+        throw new DataProviderError(`Provider returned HTTP ${response.status}.${upstreamDetail}`, "HTTP_ERROR", { status: response.status, url: url.toString() })
       }
       if (!contentType.toLowerCase().includes("json")) {
         throw new DataProviderError("Provider response was not JSON.", "INVALID_JSON", { status: response.status, url: url.toString() })
