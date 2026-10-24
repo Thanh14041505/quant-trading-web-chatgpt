@@ -305,9 +305,9 @@ def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
 
     The Unified Market API is attempted first. Source-specific VCI/KBS/MSN
     routes remain bounded fallbacks for symbols/providers that reject the
-    first route. A rate limit or network timeout stops retries immediately;
-    retrying several providers after a transient outage multiplies traffic
-    across a 200+ symbol scan.
+    first route. A rate-limit response stops retries immediately to avoid
+    multiplying traffic across a 200+ symbol scan; other provider failures may
+    try the next source before the symbol is marked unavailable.
     """
     global _rate_limit_until
     symbol = normalize_symbol(symbol)
