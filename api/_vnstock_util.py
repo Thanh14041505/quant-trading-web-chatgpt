@@ -267,26 +267,24 @@ def _is_index_symbol(symbol: str) -> bool:
     return symbol.upper() in {"VNINDEX", "VN30", "HNXINDEX", "UPCOMINDEX"}
 
 
-def _fetch_unified_history(symbol: str, start: str, end: str, source: str = "KBS"):
-    """Fetch daily OHLCV through the VNStock 4.0.9 Unified Market API.
+def _fetch_unified_history(symbol: str, start: str, end: str, source: str = "kbs"):
+    """Fetch daily OHLCV via the VNStock 4.0.9 Unified Market UI.
 
-    KBS is explicit here because VCI is timing out in the current production
-    logs. Keeping one preferred source avoids a cascade through deprecated
-    Vnstock/Quote adapters when a provider is slow.
+    Market.index() and Market.equity() are factory methods: bind the symbol
+    first, then call .ohlcv() on the returned asset object. Calling
+    market.index.ohlcv or market.equity.ohlcv accesses a function attribute and
+    fails before any upstream request is made.
     """
     from vnstock import Market
 
     market = Market()
-    params = {
-        "symbol": symbol,
-        "start": start,
-        "end": end,
-        "interval": "1D",
-        "source": str(source).lower(),
-    }
-    if _is_index_symbol(symbol):
-        return market.index.ohlcv(**params)
-    return market.equity.ohlcv(**params)
+    asset = market.index(symbol) if _is_index_symbol(symbol) else market.equity(symbol)
+    return asset.ohlcv(
+        start=start,
+        end=end,
+        interval="1D",
+        source=str(source).lower(),
+    )
 
 
 def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
