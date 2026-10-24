@@ -262,6 +262,7 @@ export function buildTplusXlsx(result: ScannerRunResult): Uint8Array {
     ["averageValue20 calculation", "Mean of up to 20 bars: use each bar value when supplied; otherwise use close*volume. The diagnostics sheet records value-field coverage (0-20 of the latest 20 bars); units are not assumed to be VND."],
     ["Missing values", "Blank cells mean unavailable/not supplied/not derivable, not zero."],
     ["Confidence", "Model confidence label, not calibrated probability of profit."],
+    ["Export ranking order", "All scanned rows are exported; successful rows are ordered by original Opportunity Score descending, then averageValue20 descending. Client-side table filters do not remove rows from the workbook."],
     ["Export scope", "Latest FeatureSnapshot fields used by the scan plus raw OHLCV history, score breakdown, original signal, diagnostics and scan failures. Full daily indicator arrays are omitted to bound generation time/file size."],
   ]
   const errors = rows.filter((r) => r.status !== "SUCCESS").map((r) => ({ symbol: r.symbol, engine: r.engine, status: r.status, error: r.error ?? "" }))
