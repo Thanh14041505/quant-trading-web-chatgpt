@@ -63,7 +63,6 @@ type Input = {
   features: FeatureEngineResult
   signal: TradingSignal
   candidate?: TplusSetupCandidate
-  averageValue20: number
 }
 
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value)
@@ -172,6 +171,8 @@ function blockingReason(args: {
   if (args.lowRvol) return { reason: "LOW_RVOL", next: "Wait for participation/volume confirmation; do not assume momentum continuation." }
   if (args.tp1ExceedsResistance || (args.structuralR != null && args.structuralR < 1.6)) return { reason: "STRUCTURAL_REWARD_RISK_WEAK", next: "Compare the strategy target with the nearest resistance; require a better entry or a more realistic plan." }
   if (args.action === "BUY") return { reason: "CHECK_EXECUTION_TRIGGER", next: "Confirm trigger and price remain inside the valid entry zone before placing an order." }
+  if (args.action === "WATCH" && args.setup === "BREAKOUT") return { reason: "WAIT_FOR_BREAKOUT_CONFIRMATION", next: "Wait for a confirmed breakout above the numeric trigger with sufficient volume; keep the original Action unchanged until the strategy gate is met." }
+  if (args.action === "WATCH" && args.setup === "PULLBACK") return { reason: "WAIT_FOR_PULLBACK_CONFIRMATION", next: "Wait for price to return to the planned zone and confirm support; keep the original Action unchanged until the strategy gate is met." }
   if (args.action === "WATCH") return { reason: "STRATEGY_BUY_GATE_NOT_MET", next: "Review score, quality, confidence, market regime and setup trigger; keep WATCH until the original strategy Buy conditions are met." }
   if (args.action === "NO_TRADE") return { reason: "STRATEGY_NO_TRADE", next: "Do not open a position unless a fresh scan produces a valid plan." }
   return { reason: "WAIT_FOR_SETUP_CONFIRMATION", next: "Wait for the stated trigger and rescan when price/volume conditions materially change." }
@@ -179,7 +180,7 @@ function blockingReason(args: {
 
 /** Diagnostics only: does not change the strategy score, TP/SL or Action. */
 export function buildTplusExecutionDiagnostics(input: Input) {
-  const { history, features, signal, averageValue20, candidate } = input
+  const { history, features, signal, candidate } = input
   const latest = history[history.length - 1]
   const snapshot = features.snapshot
   const entryLow = signal.entryZone?.low
