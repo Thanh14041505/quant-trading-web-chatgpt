@@ -1,7 +1,8 @@
 import type { CompanyInfo, FundamentalData, OHLCV } from "@/models/market"
 import type { FeatureEngineResult, FeatureSnapshot } from "@/indicators/types"
 import type { MarketRegimeSnapshot } from "@/quant/regime"
-import type { TradingSignal } from "@/quant/tplus"
+import type { TradingSignal, TplusSetupCandidate } from "@/quant/tplus"
+import type { TplusExecutionDiagnostics } from "./tplus-diagnostics"
 import type { HoldSignal } from "@/quant/hold"
 
 export type ScannerEngine = "TPLUS" | "HOLD"
@@ -47,6 +48,8 @@ export interface ScannerRowBase {
   tplusSignal?: TradingSignal
   holdSignal?: HoldSignal
   detailWarnings?: string[]
+  setupCandidate?: TplusSetupCandidate
+  executionDiagnostics?: TplusExecutionDiagnostics
 }
 
 export interface TplusScannerRow extends ScannerRowBase {
