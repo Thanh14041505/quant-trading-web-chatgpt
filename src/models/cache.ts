@@ -4,6 +4,7 @@ export type CacheEntryKind =
   | "companyInfo"
   | "fundamentals"
   | "scannerResults"
+  | "scannerExports"
   | "backtestResults"
 
 export type CacheLookupStatus = "HIT_FRESH" | "HIT_STALE" | "MISS"
@@ -56,5 +57,6 @@ export const DEFAULT_CACHE_POLICIES: Record<CacheEntryKind, CachePolicy> = {
   companyInfo: { ttlMs: 7 * 24 * 60 * 60_000, allowStaleWhenOffline: true },
   fundamentals: { ttlMs: 24 * 60 * 60_000, allowStaleWhenOffline: true },
   scannerResults: { ttlMs: 30 * 24 * 60 * 60_000, allowStaleWhenOffline: true },
+  scannerExports: { ttlMs: 30 * 24 * 60 * 60_000, allowStaleWhenOffline: true },
   backtestResults: { ttlMs: 24 * 60 * 60_000, allowStaleWhenOffline: true },
 }
