@@ -8,7 +8,13 @@ import { buildTplusExecutionDiagnostics } from "./tplus-diagnostics"
 import type { ScannerConfig, ScannerError, ScannerProgress, ScannerRow, ScannerRunResult, TplusScannerRow, HoldScannerRow } from "./types"
 import type { MarketRegimeSnapshot } from "@/quant/regime"
 
-const DEFAULT_CONCURRENCY = 4
+const DEFAULT_CONCURRENCY = 5
+const TPLUS_BATCH_GAP_MS = 5_500
+const TPLUS_BATCH_STAGGER_MS = 250
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms))
+}
 
 function calculateAverageValue20(data: OHLCV[]) {
   const values = data.slice(-20).map((bar) => Number.isFinite(bar.value) ? bar.value! : bar.close * bar.volume)
@@ -57,18 +63,30 @@ export function filterAndRankRows(rows: ScannerRow[], config: ScannerConfig) {
   })
 }
 
-async function runConcurrent<T>(items: string[], concurrency: number, task: (item: string) => Promise<T>): Promise<T[]> {
-  const results: T[] = new Array(items.length)
-  let cursor = 0
-  const worker = async () => {
-    while (true) {
-      const index = cursor++
-      if (index >= items.length) return
-      results[index] = await task(items[index])
+async function runConcurrent<T>(
+  items: string[],
+  concurrency: number,
+  task: (item: string) => Promise<T>,
+  batchGapMs = 0,
+): Promise<T[]> {
+  const batchSize = Math.max(1, Math.min(concurrency, items.length || 1))
+  const results: T[] = []
+
+  // The T+ flow uses an explicit batch barrier. Do not refill a worker as soon
+  // as one symbol completes, because that creates a continuous request stream.
+  for (let offset = 0; offset < items.length; offset += batchSize) {
+    const batch = items.slice(offset, offset + batchSize)
+    const batchResults = await Promise.all(batch.map(async (item, index) => {
+      // Stagger starts within each batch to avoid a five-request burst.
+      if (index > 0) await sleep(index * TPLUS_BATCH_STAGGER_MS)
+      return task(item)
+    }))
+    results.push(...batchResults)
+
+    if (batchGapMs > 0 && offset + batchSize < items.length) {
+      await sleep(batchGapMs)
     }
   }
-  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), Math.max(1, items.length)) }, worker)
-  await Promise.all(workers)
   return results
 }
 
@@ -167,7 +185,7 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
       progress.processed += 1
       onProgress?.({ ...progress })
     }
-  })
+  }, config.engine === "TPLUS" ? TPLUS_BATCH_GAP_MS : 0)
 
   allRows.push(...results)
 
