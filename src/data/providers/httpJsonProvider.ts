@@ -226,9 +226,15 @@ export class HttpJsonMarketDataProvider implements MarketDataProvider {
     const record = asRecord(response.payload) ?? asRecord(extractRows(response.payload)[0])
     if (!record) throw new DataProviderError("Provider returned no company object.", "INVALID_DATA", { url: response.url })
     const name = String(pick(record, ["name", "companyName", "company_name"]) ?? symbol.toUpperCase())
-    const exchangeRaw = String(pick(record, ["exchange", "exchangeCode", "floor"]) ?? "").toUpperCase()
-    const exchange: CompanyInfo["exchange"] = exchangeRaw === "HNX" ? "HNX" : exchangeRaw === "UPCOM" ? "UPCOM" : "HOSE"
-    const sector = String(pick(record, ["sectorGroup", "sector_group", "sector", "industry", "industryName"]) ?? "Unknown")
+    const exchangeRaw = String(pick(record, ["exchange", "exchangeCode", "floor"]) ?? "").trim().toUpperCase()
+    const exchange: CompanyInfo["exchange"] = exchangeRaw.includes("HNX")
+      ? "HNX"
+      : exchangeRaw.includes("UPCOM")
+        ? "UPCOM"
+        : exchangeRaw.includes("HOSE") || exchangeRaw === "HSX" || exchangeRaw.includes("HO CHI MINH")
+          ? "HOSE"
+          : "N/A"
+    const sector = String(pick(record, ["sectorGroup", "sector_group", "sector", "industry", "industryName"]) ?? "N/A")
     const industry = pick(record, ["industry", "industryName", "industry_name", "icb_name"])
     const industryCode = pick(record, ["industryCode", "industry_code", "icb_code"])
     const industryLevel = asNumber(pick(record, ["industryLevel", "industry_level", "icb_level"]))
