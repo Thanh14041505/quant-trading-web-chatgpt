@@ -247,12 +247,12 @@ export function buildTplusExecutionDiagnostics(input: Input) {
     rsiExtended,
     rs60Extended,
     lowRvol: lowRvol && ["MOMENTUM_CONTINUATION", "BREAKOUT", "PULLBACK"].includes(setup),
-    riskPctAtMid,
+    riskPctAtMid: riskPctAtEntryMid,
     entryStatus: entryZoneStatus,
     distanceToEntryHighPct,
     entryHigh,
     structuralR: structuralRAtEntryMid,
-    tp1ExceedsResistance,
+    tp1ExceedsResistance: tp1ExceedsNearestResistance,
     setup,
   })
   const weeklyBias = higherTimeframeBias(history, "W")
