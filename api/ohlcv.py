@@ -44,8 +44,17 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 400, {"error": str(error)[:240]})
         except Exception as error:
             elapsed_ms = round((time.monotonic() - started) * 1000)
-            print(f"[api/ohlcv] failure symbol={symbol} type={type(error).__name__} elapsed_ms={elapsed_ms}")
-            send_json(self, 502, {"error": str(error)[:320], "code": "VNSTOCK_UPSTREAM_ERROR"})
+            message = str(error)
+            if "VNSTOCK_RATE_LIMIT" in message:
+                error_code = "VNSTOCK_RATE_LIMIT"
+            elif "VNSTOCK_UPSTREAM_TIMEOUT" in message:
+                error_code = "VNSTOCK_UPSTREAM_TIMEOUT"
+            elif "VNSTOCK_EMPTY_HISTORY" in message:
+                error_code = "VNSTOCK_EMPTY_HISTORY"
+            else:
+                error_code = "VNSTOCK_UPSTREAM_ERROR"
+            print(f"[api/ohlcv] failure symbol={symbol} code={error_code} type={type(error).__name__} elapsed_ms={elapsed_ms}")
+            send_json(self, 502, {"error": message[:320], "code": error_code})
 
     def do_OPTIONS(self):
         send_options(self)
