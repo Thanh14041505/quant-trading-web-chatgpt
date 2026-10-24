@@ -61,6 +61,11 @@ export function useScanner(config: ScannerConfig) {
     setExcelError(null)
     setIsPreparingExcel(true)
     try {
+      if (payload.schemaVersion !== 3) {
+        setExcelBlob(null)
+        setExcelError("This saved scan predates the execution-audit workbook. Select Scan again once to create a new snapshot and prebuild the expanded XLSX.")
+        return
+      }
       if (reuseExisting) {
         const cached = await readScannerExcel(providerId, artifactConfig)
         if (cached.envelope?.payload instanceof Blob) {
