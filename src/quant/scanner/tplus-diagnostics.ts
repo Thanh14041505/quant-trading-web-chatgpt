@@ -268,7 +268,7 @@ export function buildTplusExecutionDiagnostics(input: Input) {
   if (snapshot.volume.rvol20 >= 1.2) { executionReadinessScore += 5; readinessNotes.push("RVOL20 is at least 1.2.") }
   executionReadinessScore = Math.max(0, Math.min(100, executionReadinessScore))
   const executionReadinessLabel = executionReadinessScore >= 75 ? "HIGH" : executionReadinessScore >= 50 ? "MEDIUM" : "LOW"
-  const triggerReady = triggerStatus === "BREAKOUT_CONFIRMED" || triggerStatus === "PRICE_IN_ENTRY_ZONE_WAIT_FOR_CONFIRMATION"
+  const triggerReady = triggerStatus === "BREAKOUT_CONFIRMED"
   const actionableNow = signal.action === "BUY" && triggerReady && entryZoneStatus === "INSIDE_ENTRY_ZONE" && validPlan && !distribution && !rsiExtended && !(riskPctAtEntryMid != null && riskPctAtEntryMid > 7)
   return {
     asOfDate: latest?.date ?? signal.date,
