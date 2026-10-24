@@ -47,6 +47,7 @@ export interface TplusExecutionDiagnostics {
   rsiExtended: boolean
   rs60Extended: boolean
   lowRvol: boolean
+  valueFieldCoverage20Count: number
   liquidityFlag: string
   liquidityBasis: "PROVIDER_VALUE_FIELD" | "CLOSE_TIMES_VOLUME_FALLBACK" | "MIXED_PROVIDER_VALUE_AND_CLOSE_VOLUME_FALLBACK"
   weeklyBias: HigherTimeframeBias
@@ -316,6 +317,7 @@ export function buildTplusExecutionDiagnostics(input: Input) {
     rsiExtended,
     rs60Extended,
     lowRvol,
+    valueFieldCoverage20Count: valueFieldCoverage20,
     liquidityFlag: valueFieldCoverage20 === 20
       ? "PROVIDER_VALUE_FIELD_AVAILABLE_UNIT_UNVERIFIED"
       : valueFieldCoverage20 === 0
