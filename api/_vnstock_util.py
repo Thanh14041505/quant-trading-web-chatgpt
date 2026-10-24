@@ -282,7 +282,7 @@ def _fetch_unified_history(symbol: str, start: str, end: str, source: str = "KBS
         "start": start,
         "end": end,
         "interval": "1D",
-        "source": source,
+        "source": str(source).lower(),
     }
     if _is_index_symbol(symbol):
         return market.index.ohlcv(**params)
@@ -332,14 +332,14 @@ def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
         return [bar for bar in bars if start <= bar["date"] <= end]
 
     try:
-        bars = fetch_one("KBS")
+        bars = fetch_one("kbs")
     except Exception as primary_error:
         # Route rejection is raised before provider I/O, so switching to VCI
         # here does not duplicate a timed-out request or compound quota usage.
         if not _is_route_rejection(primary_error):
             raise
         try:
-            bars = fetch_one("VCI")
+            bars = fetch_one("vci")
         except Exception as fallback_error:
             raise RuntimeError(
                 f"VNSTOCK_HISTORY_ERROR: KBS route rejected ({_error_label(primary_error)}); "
@@ -351,7 +351,7 @@ def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
     # Empty KBS output can mean a symbol is not covered by that route. This is
     # the only non-error fallback; timeouts/rate limits never reach this path.
     try:
-        bars = fetch_one("VCI")
+        bars = fetch_one("vci")
     except Exception as error:
         raise RuntimeError(f"VNSTOCK_EMPTY_HISTORY: KBS returned no bars; VCI fallback failed for {symbol}: {_error_label(error)}") from None
     if bars:
