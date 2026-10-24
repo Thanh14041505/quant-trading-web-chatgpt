@@ -1,4 +1,4 @@
-import type { OHLCV } from "@/models/market"
+import type { CompanyInfo, OHLCV } from "@/models/market"
 import type { MarketDataProvider } from "@/data/providers/market-data-provider"
 import { calculateFeatures } from "@/quant/features"
 import { calculateHoldSignal } from "@/quant/hold"
@@ -20,12 +20,16 @@ function normalizeSymbols(symbols: string[]) {
   return [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean))]
 }
 
+function unavailableCompany(symbol: string): CompanyInfo {
+  return { symbol, name: symbol, exchange: "N/A", sector: "N/A" }
+}
+
 function matchesUniverse(row: ScannerRow, config: ScannerConfig) {
   const universe = config.universe
   if (!universe) return true
   if (row.averageValue20 < universe.minAverageValue20) return false
-  if (universe.exchanges?.length && !universe.exchanges.includes(row.company.exchange)) return false
-  if (universe.sectors?.length && !universe.sectors.includes(row.company.sector)) return false
+  if (universe.exchanges?.length && row.company.exchange !== "N/A" && !universe.exchanges.includes(row.company.exchange)) return false
+  if (universe.sectors?.length && !["N/A", "Unknown"].includes(row.company.sector) && !universe.sectors.includes(row.company.sector)) return false
   return true
 }
 
@@ -97,10 +101,23 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
 
   const results = await runConcurrent(symbols, concurrency, async (symbol) => {
     try {
-      const [company, prices] = await Promise.all([
-        provider.getCompanyInfo(symbol),
-        provider.getHistoricalPrices({ symbol, timeframe: "1D", cacheMode: mode === "FORCE_REFRESH" ? "force-refresh" : mode === "CACHE_ONLY" ? "cache-only" : "default" }),
-      ])
+      // OHLCV is the critical input for T+. Do not spend a second upstream
+      // request on company profile data unless a company-based filter is in use.
+      // Even then, unavailable metadata must not fail a valid OHLCV scan.
+      const needsCompany = config.engine === "HOLD" || Boolean(
+        config.universe?.exchanges?.length || config.universe?.sectors?.length
+      )
+      let companyUnavailable = false
+      const cacheMode = mode === "FORCE_REFRESH" ? "force-refresh" : mode === "CACHE_ONLY" ? "cache-only" : "default"
+      const pricesPromise = provider.getHistoricalPrices({ symbol, timeframe: "1D", cacheMode })
+      const companyPromise: Promise<CompanyInfo> = needsCompany
+        ? provider.getCompanyInfo(symbol).catch((error) => {
+            if (config.engine === "HOLD") throw error
+            companyUnavailable = true
+            return unavailableCompany(symbol)
+          })
+        : Promise.resolve(unavailableCompany(symbol))
+      const [company, prices] = await Promise.all([companyPromise, pricesPromise])
       if (prices.length < 60) throw new Error("INSUFFICIENT_HISTORY")
       const features = calculateFeatures(prices, { benchmark: marketContext.indexData })
       const averageValue20 = calculateAverageValue20(prices)
@@ -124,6 +141,7 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
           feature: features.snapshot,
           volumeProfile: features.volumeProfile,
           history: prices,
+          detailWarnings: companyUnavailable ? ["COMPANY_INFO_UNAVAILABLE"] : undefined,
         }
         progress.success += 1
         return row
