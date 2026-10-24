@@ -4,6 +4,7 @@ import { calculateFeatures } from "@/quant/features"
 import { calculateHoldSignal } from "@/quant/hold"
 import { calculateMarketRegime } from "@/quant/regime"
 import { calculateTplusSignal } from "@/quant/tplus"
+import { buildTplusExecutionDiagnostics } from "./tplus-diagnostics"
 import type { ScannerConfig, ScannerError, ScannerProgress, ScannerRow, ScannerRunResult, TplusScannerRow, HoldScannerRow } from "./types"
 import type { MarketRegimeSnapshot } from "@/quant/regime"
 
@@ -105,7 +106,26 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
       const averageValue20 = calculateAverageValue20(prices)
       if (config.engine === "TPLUS") {
         const engine = calculateTplusSignal({ data: prices, features, regime })
-        const row: TplusScannerRow = { engine: "TPLUS", symbol, company, averageValue20, status: "SUCCESS", signal: engine.signal, feature: features.snapshot, history: prices, featureDetails: features }
+        const executionDiagnostics = buildTplusExecutionDiagnostics({
+          history: prices,
+          features,
+          signal: engine.signal,
+          candidate: engine.candidate ?? undefined,
+          averageValue20,
+        })
+        const row: TplusScannerRow = {
+          engine: "TPLUS",
+          symbol,
+          company,
+          averageValue20,
+          status: "SUCCESS",
+          signal: engine.signal,
+          setupCandidate: engine.candidate ?? undefined,
+          executionDiagnostics,
+          feature: features.snapshot,
+          history: prices,
+          featureDetails: features,
+        }
         progress.success += 1
         return row
       }
