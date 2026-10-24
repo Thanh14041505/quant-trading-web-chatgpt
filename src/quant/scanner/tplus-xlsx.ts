@@ -208,6 +208,7 @@ export function buildTplusXlsx(result: ScannerRunResult): Uint8Array {
   const summary: Array<[string, Value]> = [
     ["Generated at", result.generatedAt], ["Provider", result.providerId], ["Data mode", result.dataMode],
     ["Universe source", result.universeSource], ["Requested symbols", result.requestedSymbols?.length ?? rows.length],
+    ["Scan configuration", JSON.stringify(result.scanConfig ?? {})], ["Score weights", JSON.stringify(DEFAULT_TPLUS_CONFIG.weights)],
     ["Successful", rows.filter(isTplusSuccess).length], ["Failed", rows.filter((r) => r.status !== "SUCCESS").length],
     ["Actionable now (diagnostic only)", rows.filter((r) => r.executionDiagnostics?.actionableNow).length],
     ["Market regime", result.marketRegime?.regime ?? "N/A"], ["Strategy version", TPLUS_STRATEGY_VERSION],
@@ -238,6 +239,10 @@ export function buildTplusXlsx(result: ScannerRunResult): Uint8Array {
     { name: "Trade Plan Diagnostics", matrix: planMatrix(rows) },
     { name: "Market Regime", matrix: objectMatrix([flatten({ generatedAt: result.generatedAt, providerId: result.providerId, dataMode: result.dataMode, regime: result.marketRegime ?? null })]) },
     { name: "Methodology", matrix: kvMatrix(methodology) },
+    { name: "Requested Symbols", matrix: objectMatrix((result.requestedSymbols ?? rows.map((row) => row.symbol)).map((symbol, index) => {
+      const row = rows.find((item) => item.symbol === symbol)
+      return { order: index + 1, symbol, status: row?.status ?? "NOT_RETURNED", score: row?.signal?.score ?? "", action: row?.signal?.action ?? "", error: row?.error ?? "" }
+    })) },
     ...historySheets,
     ...(errors.length ? [{ name: "Scan Errors", matrix: objectMatrix(errors) }] : []),
   ]
