@@ -268,59 +268,13 @@ def _is_index_symbol(symbol: str) -> bool:
 
 
 def _fetch_unified_history(symbol: str, start: str, end: str):
-    """Fetch daily OHLCV using the documented primary source, with a bounded fallback.
-
-    VNStock 5.0.1 defaults to VCI for equities and KBS for domestic indices.
-    We preserve those documented defaults. A second source is attempted only
-    when VNStock rejects the first route locally (unsupported/disabled/entitlement);
-    timeouts, rate limits, and upstream failures never trigger another request.
-    """
+    """Use the working VNStock 4.0.4 Unified API shape from production."""
     from vnstock import Market
 
     market = Market()
-    is_index = _is_index_symbol(symbol)
-    asset = market.index(symbol) if is_index else market.equity(symbol)
-    primary_source = "kbs" if is_index else "vci"
-    fallback_source = "vci" if is_index else "kbs"
-
-    try:
-        return asset.ohlcv(start=start, end=end, source=primary_source)
-    except SystemExit as error:
-        if _is_rate_limit_error(error):
-            _mark_rate_limit()
-        raise
-    except Exception as error:
-        if not _is_route_rejection(error):
-            raise
-        primary_error = error
-
-    # This path is only reached for local route/capability rejection, which
-    # happens before the provider request; it does not double traffic on timeouts.
-    fallback_asset = market.index(symbol) if is_index else market.equity(symbol)
-    try:
-        result = fallback_asset.ohlcv(start=start, end=end, source=fallback_source)
-        print(
-            f"[vnstock-history] source fallback accepted symbol={symbol} "
-            f"primary={primary_source} fallback={fallback_source}"
-        )
-        return result
-    except SystemExit as error:
-        if _is_rate_limit_error(error):
-            _mark_rate_limit()
-        print(
-            f"[vnstock-history] fallback failed symbol={symbol} "
-            f"primary_error={_error_label(primary_error)} fallback_error={_error_label(error)}"
-        )
-        raise
-    except Exception as error:
-        print(
-            f"[vnstock-history] fallback failed symbol={symbol} "
-            f"primary_error={_error_label(primary_error)} fallback_error={_error_label(error)}"
-        )
-        raise RuntimeError(
-            f"VNSTOCK_SOURCE_ROUTE_UNAVAILABLE: {symbol}; "
-            f"primary={_error_label(primary_error)}; fallback={_error_label(error)}"
-        ) from None
+    if _is_index_symbol(symbol):
+        return market.index.ohlcv(symbol=symbol, start=start, end=end)
+    return market.equity.ohlcv(symbol=symbol, start=start, end=end)
 
 
 def _fetch_legacy_history(symbol: str, source: str, start: str, end: str):
