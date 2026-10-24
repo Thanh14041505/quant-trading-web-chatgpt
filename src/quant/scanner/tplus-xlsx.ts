@@ -67,7 +67,7 @@ function orderedRows(rows: ScannerRow[]): ScannerRow[] {
 }
 function rankedMatrix(rows: ScannerRow[]): Matrix {
   return objectMatrix(rows.map((row, index) => {
-    const s = row.signal, d = row.executionDiagnostics, f = row.feature
+    const s = row.engine === "TPLUS" ? row.signal : undefined, d = row.executionDiagnostics, f = row.feature
     return {
       rank: isTplusSuccess(row) ? index + 1 : "",
       symbol: row.symbol, status: row.status, error: row.error ?? "", companyName: row.company?.name ?? "",
