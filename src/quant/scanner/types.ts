@@ -1,5 +1,5 @@
 import type { CompanyInfo, FundamentalData, OHLCV } from "@/models/market"
-import type { FeatureEngineResult, FeatureSnapshot } from "@/indicators/types"
+import type { FeatureEngineResult, FeatureSnapshot, VolumeProfileResult } from "@/indicators/types"
 import type { MarketRegimeSnapshot } from "@/quant/regime"
 import type { TradingSignal, TplusSetupCandidate } from "@/quant/tplus"
 import type { TplusExecutionDiagnostics } from "./tplus-diagnostics"
@@ -44,6 +44,7 @@ export interface ScannerRowBase {
   /** Full price history and indicator series retained for detail-level Excel exports. */
   history?: OHLCV[]
   featureDetails?: FeatureEngineResult
+  volumeProfile?: VolumeProfileResult
   fundamentals?: FundamentalData
   tplusSignal?: TradingSignal
   holdSignal?: HoldSignal
