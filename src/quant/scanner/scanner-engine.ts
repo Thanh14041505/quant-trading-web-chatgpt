@@ -123,8 +123,8 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
           setupCandidate: engine.candidate ?? undefined,
           executionDiagnostics,
           feature: features.snapshot,
+          volumeProfile: features.volumeProfile,
           history: prices,
-          featureDetails: features,
         }
         progress.success += 1
         return row
