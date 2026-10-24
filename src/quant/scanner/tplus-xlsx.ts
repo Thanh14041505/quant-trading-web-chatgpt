@@ -41,7 +41,8 @@ function cell(address: string, value: CellValue): string {
 }
 function sheetXml(matrix: Matrix): string {
   const rowXml = matrix.map((row, ri) => '<row r="' + (ri + 1) + '">' + row.map((v, ci) => cell(columnName(ci) + (ri + 1), v)).join("") + '</row>').join("")
-  const columns = Math.max(1, ...matrix.map((r) => r.length))
+  let columns = 1
+  for (const row of matrix) if (row.length > columns) columns = row.length
   const rows = Math.max(1, matrix.length)
   const edge = columnName(columns - 1) + rows
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
