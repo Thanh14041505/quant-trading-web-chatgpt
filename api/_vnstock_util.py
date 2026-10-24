@@ -315,7 +315,9 @@ def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
                 ) from None
             if _is_timeout_error(error):
                 raise RuntimeError(f"VNSTOCK_UPSTREAM_TIMEOUT: {source} OHLCV timed out for {symbol}") from None
-            raise
+            # Convert library exits into normal request errors so Vercel returns
+            # a controlled 502 instead of terminating the serverless invocation.
+            raise RuntimeError(f"VNSTOCK_UPSTREAM_EXIT: {source} stopped while fetching {symbol}") from None
         except Exception as error:
             if _is_rate_limit_error(error):
                 _mark_rate_limit()
