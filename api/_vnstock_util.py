@@ -268,25 +268,59 @@ def _is_index_symbol(symbol: str) -> bool:
 
 
 def _fetch_unified_history(symbol: str, start: str, end: str):
-    """Fetch daily candles through the VNStock v5 Market API using KBS explicitly.
+    """Fetch daily OHLCV using the documented primary source, with a bounded fallback.
 
-    In VNStock v5, `Market.index(symbol)` and `Market.equity(symbol)` are
-    factory methods returning asset-specific clients. They are not objects with
-    an `.ohlcv(symbol=...)` method. Calling `market.index.ohlcv` therefore
-    raises AttributeError before any outgoing API request.
-    
-    KBS is selected explicitly so a default-source resolution does not route
-    these historical requests to Vietcap. We intentionally do not fan out to
-    a second provider if KBS fails; the caller returns a clear error instead.
+    VNStock 5.0.1 defaults to VCI for equities and KBS for domestic indices.
+    We preserve those documented defaults. A second source is attempted only
+    when VNStock rejects the first route locally (unsupported/disabled/entitlement);
+    timeouts, rate limits, and upstream failures never trigger another request.
     """
     from vnstock import Market
 
     market = Market()
-    if _is_index_symbol(symbol):
-        asset = market.index(symbol)
-    else:
-        asset = market.equity(symbol)
-    return asset.ohlcv(start=start, end=end, source="kbs")
+    is_index = _is_index_symbol(symbol)
+    asset = market.index(symbol) if is_index else market.equity(symbol)
+    primary_source = "kbs" if is_index else "vci"
+    fallback_source = "vci" if is_index else "kbs"
+
+    try:
+        return asset.ohlcv(start=start, end=end, source=primary_source)
+    except SystemExit as error:
+        if _is_rate_limit_error(error):
+            _mark_rate_limit()
+        raise
+    except Exception as error:
+        if not _is_route_rejection(error):
+            raise
+        primary_error = error
+
+    # This path is only reached for local route/capability rejection, which
+    # happens before the provider request; it does not double traffic on timeouts.
+    fallback_asset = market.index(symbol) if is_index else market.equity(symbol)
+    try:
+        result = fallback_asset.ohlcv(start=start, end=end, source=fallback_source)
+        print(
+            f"[vnstock-history] source fallback accepted symbol={symbol} "
+            f"primary={primary_source} fallback={fallback_source}"
+        )
+        return result
+    except SystemExit as error:
+        if _is_rate_limit_error(error):
+            _mark_rate_limit()
+        print(
+            f"[vnstock-history] fallback failed symbol={symbol} "
+            f"primary_error={_error_label(primary_error)} fallback_error={_error_label(error)}"
+        )
+        raise
+    except Exception as error:
+        print(
+            f"[vnstock-history] fallback failed symbol={symbol} "
+            f"primary_error={_error_label(primary_error)} fallback_error={_error_label(error)}"
+        )
+        raise RuntimeError(
+            f"VNSTOCK_SOURCE_ROUTE_UNAVAILABLE: {symbol}; "
+            f"primary={_error_label(primary_error)}; fallback={_error_label(error)}"
+        ) from None
 
 
 def _fetch_legacy_history(symbol: str, source: str, start: str, end: str):
@@ -542,6 +576,21 @@ def _is_timeout_error(error: Any) -> bool:
     ))
 
 
+def _is_route_rejection(error: Any) -> bool:
+    """Return True only for policy/capability errors that fail before network I/O."""
+    error_type = type(error).__name__
+    code = str(getattr(error, "code", "") or "").upper()
+    if error_type not in ("UnsupportedError", "EntitlementError"):
+        return False
+    return code in {
+        "VNSTOCK_CAPABILITY_UNAVAILABLE",
+        "VNSTOCK_SOURCE_DISABLED",
+        "VNSTOCK_HOST_DISABLED",
+        "VNSTOCK_TIER_SOURCE",
+        "VNSTOCK_TIER_ROUTE",
+    }
+
+
 def _mark_rate_limit() -> None:
     global _rate_limit_until
     _rate_limit_until = max(_rate_limit_until, time.time() + _RATE_LIMIT_COOLDOWN_SECONDS)
@@ -744,23 +793,16 @@ def fetch_sector_universe(force_refresh: bool = False) -> dict[str, Any]:
 
 
 def fetch_company(symbol: str) -> dict[str, Any]:
-    """Fetch one company profile with bounded requests and no legacy API fan-out.
-
-    Sector-universe/ICB data is exposed separately at /api/sectors. Fetching that
-    full market-wide table once per company can otherwise consume the rate limit
-    during a scanner run, especially when Vercel starts a cold Python instance.
-    """
+    """Fetch one company profile with bounded, policy-aware source fallback."""
     global _rate_limit_until
     symbol = normalize_symbol(symbol)
     if time.time() < _rate_limit_until:
         raise RuntimeError(f"VNSTOCK_RATE_LIMIT_COOLDOWN: retry after {_rate_limit_retry_after()} seconds")
 
     configure_vnstock_key()
-    errors: list[str] = []
-    reference_record: dict[str, Any] = {}
-
     try:
         from vnstock import Reference
+        reference = Reference()
     except SystemExit as error:
         if _is_rate_limit_error(error):
             _mark_rate_limit()
@@ -769,23 +811,27 @@ def fetch_company(symbol: str) -> dict[str, Any]:
     except Exception as error:
         raise RuntimeError(f"VNSTOCK_COMPANY_IMPORT_ERROR: {_error_label(error)}") from None
 
-    reference = Reference()
-    # KBS is the preferred source for the Unified API. Only try VCI when KBS
-    # returns an empty result or a non-transient compatibility error; never
-    # fan out after a timeout, rate limit, or SystemExit.
-    for source in ("kbs", "vci"):
+    # Reference.company.info defaults to VCI. Try KBS only if VNStock rejects
+    # that route locally; never retry another source after timeout/rate limit.
+    errors: list[str] = []
+    record: dict[str, Any] | None = None
+    for index, source in enumerate(("vci", "kbs")):
         try:
             frame = reference.company(symbol).info(source=source)
-            records = dataframe_to_records(frame)
-            if records:
-                reference_record = records[0]
+            rows = dataframe_to_records(frame)
+            if rows:
+                record = rows[0]
                 break
             errors.append(f"Reference-company-{source}:empty")
+            if index == 0:
+                # Empty data is not proof that a route is unsupported. Do not
+                # add another network call unless the source is rejected locally.
+                break
         except SystemExit as error:
             if _is_rate_limit_error(error):
                 _mark_rate_limit()
                 raise RuntimeError(f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds") from None
-            raise RuntimeError(f"VNSTOCK_COMPANY_UPSTREAM_EXIT: company profile request exited for {symbol}") from None
+            raise RuntimeError(f"VNSTOCK_COMPANY_UPSTREAM_EXIT: {_error_label(error)}") from None
         except Exception as error:
             if _is_rate_limit_error(error):
                 _mark_rate_limit()
@@ -793,13 +839,17 @@ def fetch_company(symbol: str) -> dict[str, Any]:
             if _is_timeout_error(error):
                 raise RuntimeError(f"VNSTOCK_UPSTREAM_TIMEOUT: company profile request timed out for {symbol}; retry later") from None
             errors.append(f"Reference-company-{source}:{_error_label(error)}")
+            if index == 0 and not _is_route_rejection(error):
+                # Unknown errors should be diagnosed first, not multiplied by
+                # trying another endpoint blindly.
+                break
 
-    if not reference_record:
-        raise RuntimeError("VNSTOCK_COMPANY_PROFILE_UNAVAILABLE: " + ", ".join(errors[:3]))
+    if not record:
+        raise RuntimeError("VNSTOCK_COMPANY_PROFILE_UNAVAILABLE: " + "; ".join(errors[:3]))
 
     combined = {
         str(key).strip().lower().replace(" ", "_"): value
-        for key, value in reference_record.items()
+        for key, value in record.items()
         if value is not None and str(value).strip().lower() not in ("", "nan", "none", "null")
     }
 
@@ -819,7 +869,6 @@ def fetch_company(symbol: str) -> dict[str, Any]:
     elif any(term in exchange_raw for term in ("hose", "hsx", "ho chi minh", "hochiminh")):
         exchange = "HOSE"
     else:
-        # Keep provider uncertainty explicit rather than inventing an exchange.
         exchange = None
 
     profile_sector = pick("sector", "industry", "industry_name", "industryname", "industry_group", "business_sector",
@@ -847,6 +896,7 @@ def fetch_company(symbol: str) -> dict[str, Any]:
         "source": "vnstock:Reference.company.info",
         "notes": errors[:5],
     }
+
 
 def fetch_fundamentals(symbol: str, include_history: bool = False) -> dict[str, Any]:
     """Fetch normalized fundamentals with warm-instance caching and partial results."""
