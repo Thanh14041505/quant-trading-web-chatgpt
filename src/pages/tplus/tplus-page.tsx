@@ -32,7 +32,7 @@ const DEFAULT_UNIVERSE = ['FPT', 'VCB', 'HPG', 'TCB', 'ACB', 'BID', 'MWG', 'SSI'
 const baseConfig: ScannerConfig = {
   engine: "TPLUS",
   symbols: DEFAULT_UNIVERSE,
-  concurrency: 4,
+  concurrency: 5,
   universeSource: "CONFIGURED",
   universe: { minAverageValue20: 0 },
 }
