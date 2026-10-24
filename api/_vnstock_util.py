@@ -36,11 +36,39 @@ _RATE_LIMIT_COOLDOWN_SECONDS = 60
 
 
 def _error_label(error: Exception) -> str:
-    """Return safe diagnostic type plus missing module, without secrets."""
+    """Return useful, redacted upstream diagnostics without leaking credentials."""
+    error_type = type(error).__name__
     if isinstance(error, ModuleNotFoundError):
         missing_module = getattr(error, "name", None) or "unknown-module"
         return f"ModuleNotFoundError:{missing_module}"
-    return type(error).__name__
+
+    details: list[str] = []
+    code = getattr(error, "code", None)
+    provider = getattr(error, "provider", None)
+    message = (
+        getattr(error, "message_vi", None)
+        or getattr(error, "message", None)
+        or str(error)
+        or ""
+    )
+    if code:
+        details.append(f"code={str(code)[:80]}")
+    if provider:
+        details.append(f"provider={str(provider)[:40]}")
+
+    message = str(message)
+    # Redact common credential patterns before any exception detail reaches
+    # the public API response or Vercel logs.
+    message = re.sub(
+        r"(?i)(api[_ -]?key|token|authorization|bearer)\s*[:=]\s*[^\s,;&]+",
+        r"\1=[REDACTED]",
+        message,
+    )
+    message = re.sub(r"(?i)(https?://[^\s?]+)\?[^\s]+", r"\1?[REDACTED_QUERY]", message)
+    message = re.sub(r"\s+", " ", message).strip()
+    if message and message.lower() not in (error_type.lower(), "none"):
+        details.append(f"message={message[:180]}")
+    return error_type + (f"[{'; '.join(details)}]" if details else "")
 
 
 def default_start(days: int = 400) -> str:
