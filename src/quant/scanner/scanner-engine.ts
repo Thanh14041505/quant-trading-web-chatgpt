@@ -111,7 +111,6 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
           features,
           signal: engine.signal,
           candidate: engine.candidate ?? undefined,
-          averageValue20,
         })
         const row: TplusScannerRow = {
           engine: "TPLUS",
