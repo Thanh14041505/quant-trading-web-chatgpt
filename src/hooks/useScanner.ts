@@ -69,7 +69,8 @@ export function useScanner(config: ScannerConfig) {
         }
       }
       const bytes = await buildTplusExcelInWorker(payload)
-      const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+      const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
       await writeScannerExcel(providerId, artifactConfig, blob)
       setExcelBlob(blob)
     } catch (cause) {
