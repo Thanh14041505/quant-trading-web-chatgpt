@@ -336,8 +336,8 @@ def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
     try:
         bars = fetch_one("kbs")
     except Exception as primary_error:
-        # Route rejection is raised before provider I/O, so switching to VCI
-        # here does not duplicate a timed-out request or compound quota usage.
+        # Route rejection happens locally before provider I/O, so a single VCI
+        # fallback is safe. Timeouts/rate limits never trigger a second request.
         if not _is_route_rejection(primary_error):
             raise
         try:
@@ -347,15 +347,23 @@ def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
                 f"VNSTOCK_HISTORY_ERROR: KBS route rejected ({_error_label(primary_error)}); "
                 f"VCI fallback failed ({_error_label(fallback_error)}) for {symbol}"
             ) from None
+        if bars:
+            return bars
+        raise RuntimeError(
+            f"VNSTOCK_EMPTY_HISTORY: KBS route rejected and VCI returned no bars for {symbol}"
+        )
+
     if bars:
         return bars
 
     # Empty KBS output can mean a symbol is not covered by that route. This is
-    # the only non-error fallback; timeouts/rate limits never reach this path.
+    # the only successful-empty fallback; timeouts/rate limits never reach it.
     try:
         bars = fetch_one("vci")
     except Exception as error:
-        raise RuntimeError(f"VNSTOCK_EMPTY_HISTORY: KBS returned no bars; VCI fallback failed for {symbol}: {_error_label(error)}") from None
+        raise RuntimeError(
+            f"VNSTOCK_EMPTY_HISTORY: KBS returned no bars; VCI fallback failed for {symbol}: {_error_label(error)}"
+        ) from None
     if bars:
         return bars
     raise RuntimeError(f"VNSTOCK_EMPTY_HISTORY: no daily bars returned for {symbol} from KBS or VCI")
