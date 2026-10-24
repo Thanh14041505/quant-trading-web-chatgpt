@@ -162,13 +162,13 @@ function zipStore(files: Array<{ name: string; data: Uint8Array }>): Uint8Array 
     const name = encoder.encode(file.name), data = file.data, crc = crc32(data)
     const header = new Uint8Array(30), h = new DataView(header.buffer)
     u32(h, 0, 0x04034b50); u16(h, 4, 20); u16(h, 6, 0x0800); u16(h, 8, 0)
-    u16(h, 10, 0); u16(h, 12, 0); u32(h, 14, crc); u32(h, 18, data.length); u32(h, 22, data.length)
+    u16(h, 10, 0); u16(h, 12, 0x0021); u32(h, 14, crc); u32(h, 18, data.length); u32(h, 22, data.length)
     u16(h, 26, name.length); u16(h, 28, 0)
     local.push(header, name, data); offset += header.length + name.length + data.length
     const cdOffset = offset - header.length - name.length - data.length
     const cd = new Uint8Array(46), d = new DataView(cd.buffer)
     u32(d, 0, 0x02014b50); u16(d, 4, 20); u16(d, 6, 20); u16(d, 8, 0x0800); u16(d, 10, 0)
-    u16(d, 12, 0); u16(d, 14, 0); u32(d, 16, crc); u32(d, 20, data.length); u32(d, 24, data.length)
+    u16(d, 12, 0); u16(d, 14, 0x0021); u32(d, 16, crc); u32(d, 20, data.length); u32(d, 24, data.length)
     u16(d, 28, name.length); u16(d, 30, 0); u16(d, 32, 0); u16(d, 34, 0); u16(d, 36, 0)
     u32(d, 38, 0); u32(d, 42, cdOffset)
     central.push(cd, name); centralSize += cd.length + name.length
