@@ -347,11 +347,13 @@ def _fetch_quote_history(symbol: str, source: str, start: str, end: str):
 
 
 def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
-    """Fetch daily OHLCV once through the current Unified API.
+    """Fetch daily OHLCV with the production-compatible VNStock 4.x routes.
 
-    Do not fan out through deprecated source-specific APIs after timeouts or
-    rate-limit responses: that behaviour multiplies upstream requests and can
-    turn one failure into a request storm.
+    The Unified Market API is attempted first. Source-specific VCI/KBS/MSN
+    routes remain bounded fallbacks for symbols/providers that reject the
+    first route. A rate limit or network timeout stops retries immediately;
+    retrying several providers after a transient outage multiplies traffic
+    across a 200+ symbol scan.
     """
     global _rate_limit_until
     symbol = normalize_symbol(symbol)
@@ -360,27 +362,49 @@ def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
         raise RuntimeError(f"VNSTOCK_RATE_LIMIT_COOLDOWN: retry after {retry_after} seconds")
 
     configure_vnstock_key()
-    try:
-        frame = _fetch_unified_history(symbol, start, end)
-        bars = dataframe_to_bars(frame, symbol)
-        bars = [bar for bar in bars if start <= bar["date"] <= end]
-        if bars:
-            return bars
-        raise RuntimeError(f"VNSTOCK_EMPTY_HISTORY: no daily bars returned for {symbol}")
-    except SystemExit as error:
-        if _is_rate_limit_error(error):
-            _rate_limit_until = time.time() + _RATE_LIMIT_COOLDOWN_SECONDS
-            raise RuntimeError(f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds") from None
-        raise RuntimeError(f"VNSTOCK_UPSTREAM_EXIT: Unified API exited while fetching {symbol}") from None
-    except Exception as error:
-        if _is_rate_limit_error(error):
-            _rate_limit_until = time.time() + _RATE_LIMIT_COOLDOWN_SECONDS
-            raise RuntimeError(f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds") from None
-        if _is_timeout_error(error):
-            raise RuntimeError(f"VNSTOCK_UPSTREAM_TIMEOUT: history request timed out for {symbol}; retry later") from None
-        if isinstance(error, RuntimeError) and str(error).startswith("VNSTOCK_EMPTY_HISTORY"):
-            raise
-        raise RuntimeError(f"VNSTOCK_HISTORY_ERROR: {_error_label(error)} for {symbol}") from None
+    errors: list[str] = []
+
+    fetchers = [("Unified", lambda: _fetch_unified_history(symbol, start, end))]
+    fetchers.extend(
+        (f"{source}-legacy", lambda source=source: _fetch_legacy_history(symbol, source, start, end))
+        for source in ("VCI", "KBS", "MSN")
+    )
+    fetchers.extend(
+        (f"{source}-quote", lambda source=source: _fetch_quote_history(symbol, source, start, end))
+        for source in ("VCI", "KBS", "MSN")
+    )
+
+    for label, fetcher in fetchers:
+        try:
+            frame = fetcher()
+            bars = dataframe_to_bars(frame, symbol)
+            bars = [bar for bar in bars if start <= bar["date"] <= end]
+            if bars:
+                return bars
+            errors.append(f"{label}:empty")
+        except SystemExit as error:
+            if _is_rate_limit_error(error):
+                _mark_rate_limit()
+                raise RuntimeError(
+                    f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds"
+                ) from None
+            if _is_timeout_error(error):
+                raise RuntimeError(f"VNSTOCK_UPSTREAM_TIMEOUT: history request timed out for {symbol}; retry later") from None
+            errors.append(f"{label}:{_error_label(error)}")
+        except Exception as error:
+            if _is_rate_limit_error(error):
+                _mark_rate_limit()
+                raise RuntimeError(
+                    f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds"
+                ) from None
+            if _is_timeout_error(error):
+                raise RuntimeError(f"VNSTOCK_UPSTREAM_TIMEOUT: history request timed out for {symbol}; retry later") from None
+            errors.append(f"{label}:{_error_label(error)}")
+
+    raise RuntimeError(
+        f"VNSTOCK_HISTORY_ERROR: could not fetch OHLCV for {symbol}. "
+        + ", ".join(errors[:6])
+    )
 
 def _fold_text(value: Any) -> str:
     import re
