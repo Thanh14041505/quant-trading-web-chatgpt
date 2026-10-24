@@ -72,7 +72,7 @@ function rankedMatrix(rows: ScannerRow[]): Matrix {
       symbol: row.symbol, status: row.status, error: row.error ?? "", companyName: row.company?.name ?? "",
       exchange: row.company?.exchange ?? "", sectorGroup: row.company?.sector ?? "", industry: row.company?.industry ?? "",
       industryCode: row.company?.industryCode ?? "", dataDate: d?.asOfDate ?? f?.date ?? row.history?.at(-1)?.date ?? "",
-      referenceClose: d?.referenceClose ?? f?.close ?? "", averageValue20_providerNative: row.averageValue20,
+      referenceClose: d?.referenceClose ?? f?.close ?? "", averageValue20_valueOrCloseTimesVolume: row.averageValue20,
       setup: s?.setup ?? "NONE", action: s?.action ?? "NO_SIGNAL", opportunityScore: s?.opportunityScore ?? "",
       tradeQuality: s?.tradeQuality ?? "", confidence: s?.confidence ?? "", marketRegime: s?.marketRegime ?? "",
       RS20_return_pct: f?.relativeStrength.rs20 ?? "", RS60_return_pct: f?.relativeStrength.rs60 ?? "", RS120_return_pct: f?.relativeStrength.rs120 ?? "",
@@ -107,7 +107,7 @@ function rankedMatrix(rows: ScannerRow[]): Matrix {
 function technicalMatrix(rows: ScannerRow[]): Matrix {
   return objectMatrix(rows.map((row) => ({
     symbol: row.symbol, status: row.status, ...flatten(row.feature ?? {}),
-    averageValue20_providerNative: row.averageValue20, featureWarnings: (row.detailWarnings ?? []).join(" | "),
+    averageValue20_valueOrCloseTimesVolume: row.averageValue20, featureWarnings: (row.detailWarnings ?? []).join(" | "),
   })))
 }
 function scoreMatrix(rows: ScannerRow[]): Matrix {
@@ -252,6 +252,7 @@ export function buildTplusXlsx(result: ScannerRunResult): Uint8Array {
     ["Volume Profile", "Approximate from daily OHLCV; not tick-level volume-at-price."],
     ["Weekly/monthly bias", "Lightweight proxy from aggregated closes versus EMA and slope; not canonical multi-timeframe parity."],
     ["Price/volume units", "Provider-native units are preserved. Verify price, volume and value conventions before cross-provider comparison."],
+    ["averageValue20 calculation", "Mean of up to 20 bars: use each bar value when supplied; otherwise use close*volume. The diagnostics sheet records value-field coverage (0-20 of the latest 20 bars); units are not assumed to be VND."],
     ["Missing values", "Blank cells mean unavailable/not supplied/not derivable, not zero."],
     ["Confidence", "Model confidence label, not calibrated probability of profit."],
     ["Export scope", "Latest FeatureSnapshot fields used by the scan plus raw OHLCV history, score breakdown, original signal, diagnostics and scan failures. Full daily indicator arrays are omitted to bound generation time/file size."],
