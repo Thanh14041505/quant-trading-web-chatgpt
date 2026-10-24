@@ -12,7 +12,7 @@ export interface OHLCV {
 export interface CompanyInfo {
   symbol: string
   name: string
-  exchange: "HOSE" | "HNX" | "UPCOM"
+  exchange: "HOSE" | "HNX" | "UPCOM" | "N/A"
   sector: string
   industry?: string
   industryCode?: string
