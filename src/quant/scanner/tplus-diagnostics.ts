@@ -48,7 +48,7 @@ export interface TplusExecutionDiagnostics {
   rs60Extended: boolean
   lowRvol: boolean
   liquidityFlag: string
-  liquidityBasis: "PROVIDER_VALUE_FIELD" | "CLOSE_TIMES_VOLUME_FALLBACK"
+  liquidityBasis: "PROVIDER_VALUE_FIELD" | "CLOSE_TIMES_VOLUME_FALLBACK" | "MIXED_PROVIDER_VALUE_AND_CLOSE_VOLUME_FALLBACK"
   weeklyBias: HigherTimeframeBias
   monthlyBias: HigherTimeframeBias
   higherTimeframeRisk: "LOW" | "MEDIUM" | "HIGH"
@@ -155,7 +155,6 @@ function blockingReason(args: {
   lowRvol: boolean
   riskPctAtMid?: number
   entryStatus: EntryZoneStatus
-  close: number
   entryHigh?: number
   structuralR?: number
   tp1ExceedsResistance: boolean
@@ -220,6 +219,13 @@ export function buildTplusExecutionDiagnostics(input: Input) {
   const rsiExtended = snapshot.momentum.rsi14 > 75
   const rs60Extended = snapshot.relativeStrength.rs60 > 40
   const lowRvol = snapshot.volume.rvol20 < 0.8
+  const last20 = history.slice(-20)
+  const valueFieldCoverage20 = last20.filter((bar) => finite(bar.value)).length
+  const liquidityBasis: TplusExecutionDiagnostics["liquidityBasis"] = valueFieldCoverage20 === 20
+    ? "PROVIDER_VALUE_FIELD"
+    : valueFieldCoverage20 === 0
+      ? "CLOSE_TIMES_VOLUME_FALLBACK"
+      : "MIXED_PROVIDER_VALUE_AND_CLOSE_VOLUME_FALLBACK"
   const distribution = snapshot.priceStructure.state === "DISTRIBUTION"
   const triggerPrice = setup === "BREAKOUT" ? previousHigh(history, 20) : setup === "PULLBACK" ? entryLow : entryHigh
   let triggerStatus = "WAIT_FOR_SETUP_CONFIRMATION"
@@ -241,7 +247,6 @@ export function buildTplusExecutionDiagnostics(input: Input) {
     lowRvol: lowRvol && ["MOMENTUM_CONTINUATION", "BREAKOUT", "PULLBACK"].includes(setup),
     riskPctAtMid,
     entryStatus: entryZoneStatus,
-    close,
     entryHigh,
     structuralR: structuralRAtEntryMid,
     tp1ExceedsResistance,
@@ -311,12 +316,12 @@ export function buildTplusExecutionDiagnostics(input: Input) {
     rsiExtended,
     rs60Extended,
     lowRvol,
-    liquidityFlag: history.slice(-20).length === 20 && history.slice(-20).every((bar) => finite(bar.value))
+    liquidityFlag: valueFieldCoverage20 === 20
       ? "PROVIDER_VALUE_FIELD_AVAILABLE_UNIT_UNVERIFIED"
-      : "VALUE_UNIT_UNVERIFIED_CLOSE_TIMES_VOLUME_FALLBACK",
-    liquidityBasis: history.slice(-20).length === 20 && history.slice(-20).every((bar) => finite(bar.value))
-      ? "PROVIDER_VALUE_FIELD"
-      : "CLOSE_TIMES_VOLUME_FALLBACK",
+      : valueFieldCoverage20 === 0
+        ? "CLOSE_TIMES_VOLUME_FALLBACK_UNIT_UNVERIFIED"
+        : "MIXED_PROVIDER_VALUE_AND_CLOSE_VOLUME_FALLBACK_UNITS_UNVERIFIED",
+    liquidityBasis,
     weeklyBias,
     monthlyBias,
     higherTimeframeRisk,
