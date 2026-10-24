@@ -4,7 +4,7 @@ import type { HistoricalPriceRequest, MarketDataProvider } from "./market-data-p
 import { DataProviderError } from "./provider-errors"
 import { assertUsableOHLCV, validateOHLCVRows } from "../validation/market-data-validator"
 
-const DEFAULT_TIMEOUT_MS = 12_000
+const DEFAULT_TIMEOUT_MS = 55_000
 
 type JsonRecord = Record<string, unknown>
 
