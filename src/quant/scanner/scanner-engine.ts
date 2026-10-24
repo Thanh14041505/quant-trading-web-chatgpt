@@ -189,7 +189,7 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
   }
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     engine: config.engine,
     providerId: provider.id,
     generatedAt: new Date().toISOString(),
