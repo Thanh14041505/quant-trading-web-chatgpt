@@ -9,8 +9,10 @@ import type { ScannerConfig, ScannerError, ScannerProgress, ScannerRow, ScannerR
 import type { MarketRegimeSnapshot } from "@/quant/regime"
 
 const DEFAULT_CONCURRENCY = 4
-const TPLUS_BATCH_GAP_MS = 5_500
-const TPLUS_BATCH_STAGGER_MS = 250
+// Reserve headroom under VNStock Community's 60 requests/minute quota.
+const TPLUS_BATCH_GAP_MS = 2_500
+const TPLUS_REQUEST_WORKERS = 1
+const TPLUS_RATE_LIMIT_WAIT_MS = 65_000
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -93,8 +95,6 @@ async function runConcurrent<T>(
   for (let offset = 0; offset < items.length; offset += batchSize) {
     const batch = items.slice(offset, offset + batchSize)
     const batchResults = await Promise.all(batch.map(async (item, index) => {
-      // Stagger starts within each batch to avoid a five-request burst.
-      if (index > 0) await sleep(index * TPLUS_BATCH_STAGGER_MS)
       return task(item)
     }))
     results.push(...batchResults)
@@ -125,7 +125,8 @@ function progressBase(total: number): ScannerProgress {
 export async function scanUniverse(provider: MarketDataProvider, config: ScannerConfig, onProgress?: (progress: ScannerProgress) => void): Promise<ScannerRunResult> {
   const symbols = normalizeSymbols(config.symbols)
   if (!symbols.length) throw new Error("SCANNER_EMPTY_UNIVERSE")
-  const concurrency = config.concurrency ?? (config.engine === "TPLUS" ? 5 : DEFAULT_CONCURRENCY)
+  // T+ serializes upstream calls even if saved config requests more workers.
+  const concurrency = config.engine === "TPLUS" ? TPLUS_REQUEST_WORKERS : (config.concurrency ?? DEFAULT_CONCURRENCY)
   const mode = config.mode ?? "DEFAULT"
   const marketContext = await loadMarketContext(provider, mode)
   const regime = marketContext.regime
@@ -143,7 +144,17 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
       )
       let companyUnavailable = false
       const cacheMode = mode === "FORCE_REFRESH" ? "force-refresh" : mode === "CACHE_ONLY" ? "cache-only" : "default"
-      const pricesPromise = provider.getHistoricalPrices({ symbol, timeframe: "1D", cacheMode })
+      const pricesPromise = (async () => {
+        try {
+          return await provider.getHistoricalPrices({ symbol, timeframe: "1D", cacheMode })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          if (config.engine !== "TPLUS" || !message.includes("VNSTOCK_RATE_LIMIT")) throw error
+          // Avoid cascading failures: cool down and retry this symbol once.
+          await sleep(TPLUS_RATE_LIMIT_WAIT_MS)
+          return provider.getHistoricalPrices({ symbol, timeframe: "1D", cacheMode })
+        }
+      })()
       const companyPromise: Promise<CompanyInfo> = needsCompany
         ? provider.getCompanyInfo(symbol).catch((error) => {
             if (config.engine === "HOLD") throw error

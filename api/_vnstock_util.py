@@ -279,9 +279,12 @@ def _fetch_unified_history(symbol: str, start: str, end: str, source: str = "kbs
 
     market = Market()
     asset = market.index(symbol) if _is_index_symbol(symbol) else market.equity(symbol)
+    # VNStock daily history may interpret end as exclusive. Request the next
+    # calendar day, then filter locally to the inclusive requested end date.
+    inclusive_end = (datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
     return asset.ohlcv(
         start=start,
-        end=end,
+        end=inclusive_end,
         interval="1D",
         source=str(source).lower(),
     )
