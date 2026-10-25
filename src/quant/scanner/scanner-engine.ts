@@ -9,9 +9,11 @@ import type { ScannerConfig, ScannerError, ScannerProgress, ScannerRow, ScannerR
 import type { MarketRegimeSnapshot } from "@/quant/regime"
 
 const DEFAULT_CONCURRENCY = 4
-// Reserve headroom under VNStock Community's 60 requests/minute quota.
-const TPLUS_BATCH_GAP_MS = 2_500
-const TPLUS_REQUEST_WORKERS = 1
+// Production uses four concurrent workers without pacing. T+ uses three
+// workers per batch and a conservative gap to leave headroom under VNStock's
+// community 60 requests/minute limit (roughly 36 OHLCV starts/minute).
+const TPLUS_BATCH_GAP_MS = 5_000
+const TPLUS_REQUEST_WORKERS = 3
 const TPLUS_RATE_LIMIT_WAIT_MS = 65_000
 
 function sleep(ms: number) {
@@ -123,7 +125,7 @@ function progressBase(total: number): ScannerProgress {
 export async function scanUniverse(provider: MarketDataProvider, config: ScannerConfig, onProgress?: (progress: ScannerProgress) => void): Promise<ScannerRunResult> {
   const symbols = normalizeSymbols(config.symbols)
   if (!symbols.length) throw new Error("SCANNER_EMPTY_UNIVERSE")
-  // T+ serializes upstream calls even if saved config requests more workers.
+  // T+ limits concurrency even if saved config requests more workers.
   const concurrency = config.engine === "TPLUS" ? TPLUS_REQUEST_WORKERS : (config.concurrency ?? DEFAULT_CONCURRENCY)
   const mode = config.mode ?? "DEFAULT"
   const marketContext = await loadMarketContext(provider, mode)
