@@ -94,9 +94,7 @@ async function runConcurrent<T>(
   // T+ uses a strict batch barrier, rather than continuously refilling workers.
   for (let offset = 0; offset < items.length; offset += batchSize) {
     const batch = items.slice(offset, offset + batchSize)
-    const batchResults = await Promise.all(batch.map(async (item, index) => {
-      return task(item)
-    }))
+    const batchResults = await Promise.all(batch.map((item) => task(item)))
     results.push(...batchResults)
 
     if (offset + batchSize < items.length) {
