@@ -1,13 +1,24 @@
-import type { OHLCV } from "@/models/market"
+import type { CompanyInfo, OHLCV } from "@/models/market"
 import type { MarketDataProvider } from "@/data/providers/market-data-provider"
 import { calculateFeatures } from "@/quant/features"
 import { calculateHoldSignal } from "@/quant/hold"
 import { calculateMarketRegime } from "@/quant/regime"
 import { calculateTplusSignal } from "@/quant/tplus"
+import { buildTplusExecutionDiagnostics } from "./tplus-diagnostics"
 import type { ScannerConfig, ScannerError, ScannerProgress, ScannerRow, ScannerRunResult, TplusScannerRow, HoldScannerRow } from "./types"
 import type { MarketRegimeSnapshot } from "@/quant/regime"
 
 const DEFAULT_CONCURRENCY = 4
+// Production uses four concurrent workers without pacing. T+ uses three
+// workers per batch and a conservative gap to leave headroom under VNStock's
+// community 60 requests/minute limit (roughly 36 OHLCV starts/minute).
+const TPLUS_BATCH_GAP_MS = 5_000
+const TPLUS_REQUEST_WORKERS = 3
+const TPLUS_RATE_LIMIT_WAIT_MS = 65_000
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms))
+}
 
 function calculateAverageValue20(data: OHLCV[]) {
   const values = data.slice(-20).map((bar) => Number.isFinite(bar.value) ? bar.value! : bar.close * bar.volume)
@@ -17,6 +28,10 @@ function calculateAverageValue20(data: OHLCV[]) {
 
 function normalizeSymbols(symbols: string[]) {
   return [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean))]
+}
+
+function unavailableCompany(symbol: string): CompanyInfo {
+  return { symbol, name: "N/A", exchange: "N/A", sector: "N/A" }
 }
 
 function matchesUniverse(row: ScannerRow, config: ScannerConfig) {
@@ -52,18 +67,42 @@ export function filterAndRankRows(rows: ScannerRow[], config: ScannerConfig) {
   })
 }
 
-async function runConcurrent<T>(items: string[], concurrency: number, task: (item: string) => Promise<T>): Promise<T[]> {
-  const results: T[] = new Array(items.length)
-  let cursor = 0
-  const worker = async () => {
-    while (true) {
-      const index = cursor++
-      if (index >= items.length) return
-      results[index] = await task(items[index])
+async function runConcurrent<T>(
+  items: string[],
+  concurrency: number,
+  task: (item: string) => Promise<T>,
+  batchGapMs = 0,
+): Promise<T[]> {
+  const workerCount = Math.min(Math.max(1, concurrency), Math.max(1, items.length))
+
+  // Preserve the existing worker-pool behavior for Hold and other callers.
+  if (batchGapMs <= 0) {
+    const results: T[] = new Array(items.length)
+    let cursor = 0
+    const worker = async () => {
+      while (true) {
+        const index = cursor++
+        if (index >= items.length) return
+        results[index] = await task(items[index])
+      }
+    }
+    await Promise.all(Array.from({ length: workerCount }, worker))
+    return results
+  }
+
+  const batchSize = workerCount
+  const results: T[] = []
+
+  // T+ uses a strict batch barrier, rather than continuously refilling workers.
+  for (let offset = 0; offset < items.length; offset += batchSize) {
+    const batch = items.slice(offset, offset + batchSize)
+    const batchResults = await Promise.all(batch.map((item) => task(item)))
+    results.push(...batchResults)
+
+    if (offset + batchSize < items.length) {
+      await sleep(batchGapMs)
     }
   }
-  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), Math.max(1, items.length)) }, worker)
-  await Promise.all(workers)
   return results
 }
 
@@ -86,7 +125,8 @@ function progressBase(total: number): ScannerProgress {
 export async function scanUniverse(provider: MarketDataProvider, config: ScannerConfig, onProgress?: (progress: ScannerProgress) => void): Promise<ScannerRunResult> {
   const symbols = normalizeSymbols(config.symbols)
   if (!symbols.length) throw new Error("SCANNER_EMPTY_UNIVERSE")
-  const concurrency = config.concurrency ?? DEFAULT_CONCURRENCY
+  // T+ limits concurrency even if saved config requests more workers.
+  const concurrency = config.engine === "TPLUS" ? TPLUS_REQUEST_WORKERS : (config.concurrency ?? DEFAULT_CONCURRENCY)
   const mode = config.mode ?? "DEFAULT"
   const marketContext = await loadMarketContext(provider, mode)
   const regime = marketContext.regime
@@ -96,16 +136,58 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
 
   const results = await runConcurrent(symbols, concurrency, async (symbol) => {
     try {
-      const [company, prices] = await Promise.all([
-        provider.getCompanyInfo(symbol),
-        provider.getHistoricalPrices({ symbol, timeframe: "1D", cacheMode: mode === "FORCE_REFRESH" ? "force-refresh" : mode === "CACHE_ONLY" ? "cache-only" : "default" }),
-      ])
+      // OHLCV is the critical input for T+. Do not spend a second upstream
+      // request on company profile data unless a company-based filter is in use.
+      // Even then, unavailable metadata must not fail a valid OHLCV scan.
+      const needsCompany = config.engine === "HOLD" || Boolean(
+        config.universe?.exchanges?.length || config.universe?.sectors?.length
+      )
+      let companyUnavailable = false
+      const cacheMode = mode === "FORCE_REFRESH" ? "force-refresh" : mode === "CACHE_ONLY" ? "cache-only" : "default"
+      const pricesPromise = (async () => {
+        try {
+          return await provider.getHistoricalPrices({ symbol, timeframe: "1D", cacheMode })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          if (config.engine !== "TPLUS" || !message.includes("VNSTOCK_RATE_LIMIT")) throw error
+          // Avoid cascading failures: cool down and retry this symbol once.
+          await sleep(TPLUS_RATE_LIMIT_WAIT_MS)
+          return provider.getHistoricalPrices({ symbol, timeframe: "1D", cacheMode })
+        }
+      })()
+      const companyPromise: Promise<CompanyInfo> = needsCompany
+        ? provider.getCompanyInfo(symbol).catch((error) => {
+            if (config.engine === "HOLD") throw error
+            companyUnavailable = true
+            return unavailableCompany(symbol)
+          })
+        : Promise.resolve(unavailableCompany(symbol))
+      const [company, prices] = await Promise.all([companyPromise, pricesPromise])
       if (prices.length < 60) throw new Error("INSUFFICIENT_HISTORY")
       const features = calculateFeatures(prices, { benchmark: marketContext.indexData })
       const averageValue20 = calculateAverageValue20(prices)
       if (config.engine === "TPLUS") {
         const engine = calculateTplusSignal({ data: prices, features, regime })
-        const row: TplusScannerRow = { engine: "TPLUS", symbol, company, averageValue20, status: "SUCCESS", signal: engine.signal, feature: features.snapshot, history: prices, featureDetails: features }
+        const executionDiagnostics = buildTplusExecutionDiagnostics({
+          history: prices,
+          features,
+          signal: engine.signal,
+          candidate: engine.candidate ?? undefined,
+        })
+        const row: TplusScannerRow = {
+          engine: "TPLUS",
+          symbol,
+          company,
+          averageValue20,
+          status: "SUCCESS",
+          signal: engine.signal,
+          setupCandidate: engine.candidate ?? undefined,
+          executionDiagnostics,
+          feature: features.snapshot,
+          volumeProfile: features.volumeProfile,
+          history: prices,
+          detailWarnings: companyUnavailable ? ["COMPANY_INFO_UNAVAILABLE"] : undefined,
+        }
         progress.success += 1
         return row
       }
@@ -130,7 +212,7 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
       progress.processed += 1
       onProgress?.({ ...progress })
     }
-  })
+  }, config.engine === "TPLUS" ? TPLUS_BATCH_GAP_MS : 0)
 
   allRows.push(...results)
 
@@ -169,7 +251,7 @@ export async function scanUniverse(provider: MarketDataProvider, config: Scanner
   }
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     engine: config.engine,
     providerId: provider.id,
     generatedAt: new Date().toISOString(),

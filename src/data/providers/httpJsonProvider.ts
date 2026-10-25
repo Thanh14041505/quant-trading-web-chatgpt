@@ -4,7 +4,7 @@ import type { HistoricalPriceRequest, MarketDataProvider } from "./market-data-p
 import { DataProviderError } from "./provider-errors"
 import { assertUsableOHLCV, validateOHLCVRows } from "../validation/market-data-validator"
 
-const DEFAULT_TIMEOUT_MS = 12_000
+const DEFAULT_TIMEOUT_MS = 55_000
 
 type JsonRecord = Record<string, unknown>
 
@@ -152,7 +152,20 @@ export class HttpJsonMarketDataProvider implements MarketDataProvider {
       const latencyMs = Math.round(performance.now() - started)
       const contentType = response.headers.get("content-type") ?? ""
       if (!response.ok) {
-        throw new DataProviderError(`Provider returned HTTP ${response.status}.`, "HTTP_ERROR", { status: response.status, url: url.toString() })
+        let upstreamDetail = ""
+        try {
+          const errorRecord = asRecord(await response.clone().json())
+          if (errorRecord) {
+            const errorCode = pick(errorRecord, ["code", "errorCode", "error_code"])
+            const errorMessage = pick(errorRecord, ["error", "message", "detail"])
+            if (errorMessage != null) {
+              upstreamDetail = ` ${errorCode != null ? String(errorCode) + ": " : ""}${String(errorMessage).slice(0, 220)}`
+            }
+          }
+        } catch {
+          // Non-JSON error bodies are represented by the HTTP status only.
+        }
+        throw new DataProviderError(`Provider returned HTTP ${response.status}.${upstreamDetail}`, "HTTP_ERROR", { status: response.status, url: url.toString() })
       }
       if (!contentType.toLowerCase().includes("json")) {
         throw new DataProviderError("Provider response was not JSON.", "INVALID_JSON", { status: response.status, url: url.toString() })
@@ -226,9 +239,15 @@ export class HttpJsonMarketDataProvider implements MarketDataProvider {
     const record = asRecord(response.payload) ?? asRecord(extractRows(response.payload)[0])
     if (!record) throw new DataProviderError("Provider returned no company object.", "INVALID_DATA", { url: response.url })
     const name = String(pick(record, ["name", "companyName", "company_name"]) ?? symbol.toUpperCase())
-    const exchangeRaw = String(pick(record, ["exchange", "exchangeCode", "floor"]) ?? "").toUpperCase()
-    const exchange: CompanyInfo["exchange"] = exchangeRaw === "HNX" ? "HNX" : exchangeRaw === "UPCOM" ? "UPCOM" : "HOSE"
-    const sector = String(pick(record, ["sectorGroup", "sector_group", "sector", "industry", "industryName"]) ?? "Unknown")
+    const exchangeRaw = String(pick(record, ["exchange", "exchangeCode", "floor"]) ?? "").trim().toUpperCase()
+    const exchange: CompanyInfo["exchange"] = exchangeRaw.includes("HNX")
+      ? "HNX"
+      : exchangeRaw.includes("UPCOM")
+        ? "UPCOM"
+        : exchangeRaw.includes("HOSE") || exchangeRaw === "HSX" || exchangeRaw.includes("HO CHI MINH")
+          ? "HOSE"
+          : "N/A"
+    const sector = String(pick(record, ["sectorGroup", "sector_group", "sector", "industry", "industryName"]) ?? "N/A")
     const industry = pick(record, ["industry", "industryName", "industry_name", "icb_name"])
     const industryCode = pick(record, ["industryCode", "industry_code", "icb_code"])
     const industryLevel = asNumber(pick(record, ["industryLevel", "industry_level", "icb_level"]))

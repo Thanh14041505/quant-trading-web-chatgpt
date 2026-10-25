@@ -32,3 +32,31 @@ export async function writeScannerCache(providerId: string, config: ScannerConfi
     metadata: { source: "scanner", engine: config.engine },
   })
 }
+
+
+export function scannerExcelCacheKey(providerId: string, config: ScannerConfig) {
+  return clientCache.buildKey({
+    providerId,
+    kind: "scannerExports",
+    extra: scannerCacheKey(providerId, config),
+  })
+}
+
+export async function readScannerExcel(providerId: string, config: ScannerConfig) {
+  return clientCache.get<Blob>(scannerExcelCacheKey(providerId, config), "scannerExports")
+}
+
+export async function writeScannerExcel(providerId: string, config: ScannerConfig, payload: Blob) {
+  return clientCache.set({
+    kind: "scannerExports",
+    providerId,
+    ttlMs: 30 * 24 * 60 * 60_000,
+    payload,
+    keyParts: { extra: scannerCacheKey(providerId, config) },
+    metadata: { source: "client-worker", engine: config.engine, format: "xlsx" },
+  })
+}
+
+export async function removeScannerExcel(providerId: string, config: ScannerConfig) {
+  return clientCache.remove(scannerExcelCacheKey(providerId, config), "scannerExports")
+}

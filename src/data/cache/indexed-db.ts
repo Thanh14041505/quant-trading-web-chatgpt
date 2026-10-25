@@ -1,7 +1,7 @@
 import type { CacheEnvelope } from "@/models/cache"
 
 export const CACHE_DB_NAME = "vn-quant-trading-cache"
-export const CACHE_DB_VERSION = 1
+export const CACHE_DB_VERSION = 2
 
 export const CACHE_STORES = [
   "marketData",
@@ -9,6 +9,7 @@ export const CACHE_STORES = [
   "companyInfo",
   "fundamentals",
   "scannerResults",
+  "scannerExports",
   "backtestResults",
 ] as const
 

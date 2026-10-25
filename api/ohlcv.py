@@ -1,6 +1,7 @@
 from http.server import BaseHTTPRequestHandler
 import os
 import sys
+import time
 sys.path.insert(0, os.path.dirname(__file__))
 from urllib.parse import parse_qs, urlparse
 
@@ -10,6 +11,8 @@ from _vnstock_util import default_end, default_start, fetch_history, key_from_re
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        started = time.monotonic()
+        symbol = "N/A"
         try:
             query = parse_qs(urlparse(self.path).query)
             symbol = normalize_symbol((query.get("symbol") or ["HAH"])[0])
@@ -25,6 +28,8 @@ class handler(BaseHTTPRequestHandler):
             configure_vnstock_key(key_from_request(self))
             bars = fetch_history(symbol, start, end)
             bars = [bar for bar in bars if start <= bar["date"] <= end]
+            elapsed_ms = round((time.monotonic() - started) * 1000)
+            print(f"[api/ohlcv] success symbol={symbol} bars={len(bars)} elapsed_ms={elapsed_ms}")
             send_json(self, 200, {
                 "data": bars,
                 "symbol": symbol,
@@ -34,9 +39,22 @@ class handler(BaseHTTPRequestHandler):
                 "source": "vnstock",
             }, cache_seconds=60)
         except ValueError as error:
+            elapsed_ms = round((time.monotonic() - started) * 1000)
+            print(f"[api/ohlcv] bad_request symbol={symbol} type={type(error).__name__} elapsed_ms={elapsed_ms}")
             send_json(self, 400, {"error": str(error)[:240]})
         except Exception as error:
-            send_json(self, 502, {"error": str(error)[:320], "code": "VNSTOCK_UPSTREAM_ERROR"})
+            elapsed_ms = round((time.monotonic() - started) * 1000)
+            message = str(error)
+            if "VNSTOCK_RATE_LIMIT" in message:
+                error_code = "VNSTOCK_RATE_LIMIT"
+            elif "VNSTOCK_UPSTREAM_TIMEOUT" in message:
+                error_code = "VNSTOCK_UPSTREAM_TIMEOUT"
+            elif "VNSTOCK_EMPTY_HISTORY" in message:
+                error_code = "VNSTOCK_EMPTY_HISTORY"
+            else:
+                error_code = "VNSTOCK_UPSTREAM_ERROR"
+            print(f"[api/ohlcv] failure symbol={symbol} code={error_code} type={type(error).__name__} elapsed_ms={elapsed_ms}")
+            send_json(self, 502, {"error": message[:320], "code": error_code})
 
     def do_OPTIONS(self):
         send_options(self)

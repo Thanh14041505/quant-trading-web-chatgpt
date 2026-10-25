@@ -32,15 +32,43 @@ _configured_key_digest: str | None = None
 _fundamentals_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _FUNDAMENTALS_CACHE_TTL_SECONDS = 6 * 60 * 60
 _rate_limit_until = 0.0
-_RATE_LIMIT_COOLDOWN_SECONDS = 15
+_RATE_LIMIT_COOLDOWN_SECONDS = 60
 
 
 def _error_label(error: Exception) -> str:
-    """Return safe diagnostic type plus missing module, without secrets."""
+    """Return useful, redacted upstream diagnostics without leaking credentials."""
+    error_type = type(error).__name__
     if isinstance(error, ModuleNotFoundError):
         missing_module = getattr(error, "name", None) or "unknown-module"
         return f"ModuleNotFoundError:{missing_module}"
-    return type(error).__name__
+
+    details: list[str] = []
+    code = getattr(error, "code", None)
+    provider = getattr(error, "provider", None)
+    message = (
+        getattr(error, "message_vi", None)
+        or getattr(error, "message", None)
+        or str(error)
+        or ""
+    )
+    if code:
+        details.append(f"code={str(code)[:80]}")
+    if provider:
+        details.append(f"provider={str(provider)[:40]}")
+
+    message = str(message)
+    # Redact common credential patterns before any exception detail reaches
+    # the public API response or Vercel logs.
+    message = re.sub(
+        r"(?i)(api[_ -]?key|token|authorization|bearer)\s*[:=]\s*[^\s,;&]+",
+        r"\1=[REDACTED]",
+        message,
+    )
+    message = re.sub(r"(?i)(https?://[^\s?]+)\?[^\s]+", r"\1?[REDACTED_QUERY]", message)
+    message = re.sub(r"\s+", " ", message).strip()
+    if message and message.lower() not in (error_type.lower(), "none"):
+        details.append(f"message={message[:180]}")
+    return error_type + (f"[{'; '.join(details)}]" if details else "")
 
 
 def default_start(days: int = 400) -> str:
@@ -239,71 +267,107 @@ def _is_index_symbol(symbol: str) -> bool:
     return symbol.upper() in {"VNINDEX", "VN30", "HNXINDEX", "UPCOMINDEX"}
 
 
-def _fetch_unified_history(symbol: str, start: str, end: str):
-    """Preferred Unified UI used by current VNStock v4+ documentation."""
+def _fetch_unified_history(symbol: str, start: str, end: str, source: str = "kbs"):
+    """Fetch daily OHLCV via the VNStock 4.0.9 Unified Market UI.
+
+    Market.index() and Market.equity() are factory methods: bind the symbol
+    first, then call .ohlcv() on the returned asset object. Calling
+    market.index.ohlcv or market.equity.ohlcv accesses a function attribute and
+    fails before any upstream request is made.
+    """
     from vnstock import Market
 
     market = Market()
-    if _is_index_symbol(symbol):
-        return market.index.ohlcv(symbol=symbol, start=start, end=end)
-    return market.equity.ohlcv(symbol=symbol, start=start, end=end)
-
-
-def _fetch_legacy_history(symbol: str, source: str, start: str, end: str):
-    """Fallback to the source-specific API used by the existing project."""
-    from vnstock import Vnstock
-
-    stock = Vnstock().stock(symbol=symbol, source=source)
-    return stock.quote.history(start=start, end=end, interval="1D")
-
-
-def _fetch_quote_history(symbol: str, source: str, start: str, end: str):
-    from vnstock import Quote
-
-    quote = Quote(symbol=symbol, source=source)
-    try:
-        return quote.history(start=start, end=end, interval="1D")
-    except TypeError:
-        # Unified v4-style signature from current VNStock examples.
-        try:
-            from vnstock.core.types import TimeFrame
-            return quote.history(start_date=start, end_date=end, resolution=TimeFrame.DAILY)
-        except (ImportError, TypeError):
-            return quote.history(start_date=start, end_date=end)
+    asset = market.index(symbol) if _is_index_symbol(symbol) else market.equity(symbol)
+    # VNStock daily history may interpret end as exclusive. Request the next
+    # calendar day, then filter locally to the inclusive requested end date.
+    inclusive_end = (datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    return asset.ohlcv(
+        start=start,
+        end=inclusive_end,
+        interval="1D",
+        source=str(source).lower(),
+    )
 
 
 def fetch_history(symbol: str, start: str, end: str) -> list[dict[str, Any]]:
+    """Fetch daily OHLCV using bounded, rate-limit-aware source selection.
+
+    Normal path: one KBS request per symbol. VCI is only tried if KBS rejects
+    the route locally or returns no usable bars. Timeouts and rate limits stop
+    immediately; do not retry the same slow hosts through deprecated adapters.
+    """
+    global _rate_limit_until
     symbol = normalize_symbol(symbol)
-    errors: list[str] = []
+    if time.time() < _rate_limit_until:
+        retry_after = max(1, int(_rate_limit_until - time.time()))
+        raise RuntimeError(f"VNSTOCK_RATE_LIMIT_COOLDOWN: retry after {retry_after} seconds")
+
     configure_vnstock_key()
 
-    # Prefer VNStock v4+ Unified UI first; older source-specific calls remain
-    # as fallback for the version already used by the reference project.
-    fetchers = [("Unified", lambda: _fetch_unified_history(symbol, start, end))]
-    fetchers.extend(
-        (f"{source}-legacy", lambda source=source: _fetch_legacy_history(symbol, source, start, end))
-        for source in ("VCI", "KBS", "MSN")
-    )
-    fetchers.extend(
-        (f"{source}-quote", lambda source=source: _fetch_quote_history(symbol, source, start, end))
-        for source in ("VCI", "KBS", "MSN")
-    )
-    for label, fetcher in fetchers:
+    def fetch_one(source: str) -> list[dict[str, Any]]:
         try:
-            frame = fetcher()
-            bars = dataframe_to_bars(frame, symbol)
-            bars = [bar for bar in bars if start <= bar["date"] <= end]
-            if bars:
-                return bars
-            errors.append(f"{label}:empty")
+            frame = _fetch_unified_history(symbol, start, end, source=source)
+        except SystemExit as error:
+            if _is_rate_limit_error(error):
+                _mark_rate_limit()
+                raise RuntimeError(
+                    f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds"
+                ) from None
+            if _is_timeout_error(error):
+                raise RuntimeError(f"VNSTOCK_UPSTREAM_TIMEOUT: {source} OHLCV timed out for {symbol}") from None
+            # Convert library exits into normal request errors so Vercel returns
+            # a controlled 502 instead of terminating the serverless invocation.
+            raise RuntimeError(f"VNSTOCK_UPSTREAM_EXIT: {source} stopped while fetching {symbol}") from None
         except Exception as error:
-            errors.append(f"{label}:{_error_label(error)}")
+            if _is_rate_limit_error(error):
+                _mark_rate_limit()
+                raise RuntimeError(
+                    f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds"
+                ) from None
+            if _is_timeout_error(error):
+                raise RuntimeError(f"VNSTOCK_UPSTREAM_TIMEOUT: {source} OHLCV timed out for {symbol}") from None
+            if _is_route_rejection(error):
+                raise
+            raise RuntimeError(f"VNSTOCK_HISTORY_ERROR: {source} { _error_label(error) } for {symbol}") from None
 
-    raise RuntimeError(
-        f"VNStock could not return history for {symbol}. Tried: "
-        + ", ".join(errors[:8])
-        + ". Verify the installed VNStock version, API key, symbol, and upstream availability."
-    )
+        bars = dataframe_to_bars(frame, symbol)
+        return [bar for bar in bars if start <= bar["date"] <= end]
+
+    try:
+        bars = fetch_one("kbs")
+    except Exception as primary_error:
+        # Route rejection happens locally before provider I/O, so a single VCI
+        # fallback is safe. Timeouts/rate limits never trigger a second request.
+        if not _is_route_rejection(primary_error):
+            raise
+        try:
+            bars = fetch_one("vci")
+        except Exception as fallback_error:
+            raise RuntimeError(
+                f"VNSTOCK_HISTORY_ERROR: KBS route rejected ({_error_label(primary_error)}); "
+                f"VCI fallback failed ({_error_label(fallback_error)}) for {symbol}"
+            ) from None
+        if bars:
+            return bars
+        raise RuntimeError(
+            f"VNSTOCK_EMPTY_HISTORY: KBS route rejected and VCI returned no bars for {symbol}"
+        )
+
+    if bars:
+        return bars
+
+    # Empty KBS output can mean a symbol is not covered by that route. This is
+    # the only successful-empty fallback; timeouts/rate limits never reach it.
+    try:
+        bars = fetch_one("vci")
+    except Exception as error:
+        raise RuntimeError(
+            f"VNSTOCK_EMPTY_HISTORY: KBS returned no bars; VCI fallback failed for {symbol}: {_error_label(error)}"
+        ) from None
+    if bars:
+        return bars
+    raise RuntimeError(f"VNSTOCK_EMPTY_HISTORY: no daily bars returned for {symbol} from KBS or VCI")
 
 
 def _fold_text(value: Any) -> str:
@@ -488,9 +552,40 @@ def _is_rate_limit_error(error: Any) -> bool:
     return any(token in text for token in (
         "rate limit", "rate-limit", "too many requests", "60/60",
         "requests per minute", "request limit", "gioi han api", "gioi han toi da",
-        "wait to retry", "retry after",
+        "wait to retry", "retry after", "http 429",
     ))
 
+
+def _is_timeout_error(error: Any) -> bool:
+    text = str(error or "").lower()
+    return any(token in text for token in (
+        "timed out", "read timeout", "connect timeout", "request timeout",
+        "timeout expired", "max retries exceeded", "retryerror",
+    ))
+
+
+def _is_route_rejection(error: Any) -> bool:
+    """Return True only for policy/capability errors that fail before network I/O."""
+    error_type = type(error).__name__
+    code = str(getattr(error, "code", "") or "").upper()
+    if error_type not in ("UnsupportedError", "EntitlementError"):
+        return False
+    return code in {
+        "VNSTOCK_CAPABILITY_UNAVAILABLE",
+        "VNSTOCK_SOURCE_DISABLED",
+        "VNSTOCK_HOST_DISABLED",
+        "VNSTOCK_TIER_SOURCE",
+        "VNSTOCK_TIER_ROUTE",
+    }
+
+
+def _mark_rate_limit() -> None:
+    global _rate_limit_until
+    _rate_limit_until = max(_rate_limit_until, time.time() + _RATE_LIMIT_COOLDOWN_SECONDS)
+
+
+def _rate_limit_retry_after() -> int:
+    return max(1, int(_rate_limit_until - time.time()))
 
 def _is_rate_limit_marker(message: str) -> bool:
     text = str(message or "").lower()
@@ -550,12 +645,19 @@ def _fetch_financial_records(
                         return [], None, [*errors, f"Unified-{method_name}-{period}:{marker}"]
                     except Exception as error:
                         if _is_rate_limit_error(error):
-                            _rate_limit_until = time.time() + _RATE_LIMIT_COOLDOWN_SECONDS
+                            _mark_rate_limit()
                             return [], None, [*errors, f"Unified-{method_name}-{period}:RATE_LIMIT:{_error_label(error)}"]
+                        if _is_timeout_error(error):
+                            return [], None, [*errors, f"Unified-{method_name}-{period}:UPSTREAM_TIMEOUT"]
                         errors.append(f"Unified-{method_name}-{period}:{_error_label(error)}")
 
-    # Legacy fallback remains for version/source compatibility. Each source is
-    # attempted once at the preferred period; fatal/rate-limit errors stop retries.
+    # Do not fan out to legacy Finance when the Unified request reached the
+    # upstream and timed out. That multiplies load during provider incidents.
+    if any("UPSTREAM_TIMEOUT" in item or "RATE_LIMIT" in item for item in errors):
+        return [], None, errors
+
+    # Legacy fallback remains only for import/method compatibility. Each source
+    # is attempted once at the preferred period; fatal errors stop retries.
     try:
         from vnstock import Finance
     except SystemExit as error:
@@ -679,59 +781,69 @@ def fetch_sector_universe(force_refresh: bool = False) -> dict[str, Any]:
 
 
 def fetch_company(symbol: str) -> dict[str, Any]:
+    """Fetch one company profile with bounded, policy-aware source fallback."""
+    global _rate_limit_until
     symbol = normalize_symbol(symbol)
-    configure_vnstock_key()
-    errors: list[str] = []
-    reference_record: dict[str, Any] = {}
-    overview_record: dict[str, Any] = {}
+    if time.time() < _rate_limit_until:
+        raise RuntimeError(f"VNSTOCK_RATE_LIMIT_COOLDOWN: retry after {_rate_limit_retry_after()} seconds")
 
-    # v4.0.4 uses Reference().company(symbol).info(source=...), not
-    # Reference().company.info(symbol=...).
+    configure_vnstock_key()
     try:
         from vnstock import Reference
-        for source in ("kbs", "vci"):
-            try:
-                frame = Reference().company(symbol).info(source=source)
-                records = dataframe_to_records(frame)
-                if records:
-                    reference_record = records[0]
-                    break
-                errors.append(f"Reference-company-{source}:empty")
-            except Exception as error:
-                errors.append(f"Reference-company-{source}:{_error_label(error)}")
+        reference = Reference()
+    except SystemExit as error:
+        if _is_rate_limit_error(error):
+            _mark_rate_limit()
+            raise RuntimeError(f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds") from None
+        raise RuntimeError("VNSTOCK_COMPANY_UPSTREAM_EXIT: VNStock exited while importing Reference") from None
     except Exception as error:
-        errors.append(f"Reference-import:{_error_label(error)}")
+        raise RuntimeError(f"VNSTOCK_COMPANY_IMPORT_ERROR: {_error_label(error)}") from None
 
-    # The legacy overview frequently provides listing/exchange fields not present
-    # in the compact Reference profile; use it as a complementary source.
-    try:
-        from vnstock import Company
-        for source in ("KBS", "VCI"):
-            try:
-                frame = Company(source=source, symbol=symbol).overview()
-                records = dataframe_to_records(frame)
-                if records:
-                    overview_record = records[0]
-                    break
-                errors.append(f"Company-overview-{source}:empty")
-            except Exception as error:
-                errors.append(f"Company-overview-{source}:{_error_label(error)}")
-    except Exception as error:
-        errors.append(f"Company-import:{_error_label(error)}")
+    # Reference.company.info defaults to VCI. Try KBS only if VNStock rejects
+    # that route locally; never retry another source after timeout/rate limit.
+    errors: list[str] = []
+    record: dict[str, Any] | None = None
+    for index, source in enumerate(("vci", "kbs")):
+        try:
+            frame = reference.company(symbol).info(source=source)
+            rows = dataframe_to_records(frame)
+            if rows:
+                record = rows[0]
+                break
+            errors.append(f"Reference-company-{source}:empty")
+            if index == 0:
+                # Empty data is not proof that a route is unsupported. Do not
+                # add another network call unless the source is rejected locally.
+                break
+        except SystemExit as error:
+            if _is_rate_limit_error(error):
+                _mark_rate_limit()
+                raise RuntimeError(f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds") from None
+            raise RuntimeError(f"VNSTOCK_COMPANY_UPSTREAM_EXIT: {_error_label(error)}") from None
+        except Exception as error:
+            if _is_rate_limit_error(error):
+                _mark_rate_limit()
+                raise RuntimeError(f"VNSTOCK_RATE_LIMIT: upstream quota reached; retry after {_RATE_LIMIT_COOLDOWN_SECONDS} seconds") from None
+            if _is_timeout_error(error):
+                raise RuntimeError(f"VNSTOCK_UPSTREAM_TIMEOUT: company profile request timed out for {symbol}; retry later") from None
+            errors.append(f"Reference-company-{source}:{_error_label(error)}")
+            if index == 0 and not _is_route_rejection(error):
+                # Unknown errors should be diagnosed first, not multiplied by
+                # trying another endpoint blindly.
+                break
 
-    if not reference_record and not overview_record:
-        raise RuntimeError("VNStock company profile unavailable. Tried: " + ", ".join(errors[:5]))
+    if not record:
+        raise RuntimeError("VNSTOCK_COMPANY_PROFILE_UNAVAILABLE: " + "; ".join(errors[:3]))
 
-    combined: dict[str, Any] = {}
-    for record in (overview_record, reference_record):
-        for key, value in record.items():
-            if value is not None and str(value).strip().lower() not in ("", "nan", "none", "null"):
-                combined[str(key).strip().lower().replace(" ", "_")] = value
+    combined = {
+        str(key).strip().lower().replace(" ", "_"): value
+        for key, value in record.items()
+        if value is not None and str(value).strip().lower() not in ("", "nan", "none", "null")
+    }
 
     def pick(*keys: str) -> Any:
         for key in keys:
-            normalized = key.lower().replace(" ", "_")
-            value = combined.get(normalized)
+            value = combined.get(key.lower().replace(" ", "_"))
             if value is not None and str(value).strip().lower() not in ("", "nan", "none", "null"):
                 return value
         return None
@@ -747,16 +859,15 @@ def fetch_company(symbol: str) -> dict[str, Any]:
     else:
         exchange = None
 
-    profile_sector = pick("sector", "industry", "industry_name", "industryname", "industry_group", "business_sector")
-    try:
-        classification = _get_industry_sector_map().get(symbol, {})
-    except Exception as error:
-        errors.append(f"Industry-map:{_error_label(error)}")
-        classification = {}
-    industry = classification.get("industry") or pick("icb_name", "icb_industry", "industry_level_4", "industry_name_en") or profile_sector
-    sector_group = _sector_group_from_text(" ".join(str(value or "") for value in (industry, profile_sector, name, symbol)))
-    # Some sources only label the broad group as Financial Services. Preserve that label
-    # as the reported industry instead of fabricating a specific ICB classification.
+    profile_sector = pick("sector", "industry", "industry_name", "industryname", "industry_group", "business_sector",
+                          "icb_name", "icb_industry", "industry_level_4", "industry_name_en")
+    industry = pick("icb_name", "icb_industry", "industry_level_4", "industry_name_en", "industry", "industry_name")
+    industry_code = pick("icb_code", "industry_code")
+    industry_level = _numeric(pick("icb_level", "industry_level", "level"))
+    sector_group = _sector_group_from_text(" ".join(str(value or "") for value in (industry, profile_sector, name)))
+    if sector_group == "Other" and not profile_sector and not industry:
+        sector_group = "Unknown"
+
     return {
         "symbol": symbol,
         "name": name,
@@ -764,13 +875,13 @@ def fetch_company(symbol: str) -> dict[str, Any]:
         "sector": sector_group,
         "sectorGroup": sector_group,
         "industry": str(industry).strip() if industry else None,
-        "industryCode": classification.get("industryCode") or pick("icb_code", "industry_code"),
-        "industryLevel": classification.get("industryLevel"),
+        "industryCode": str(industry_code).strip() if industry_code else None,
+        "industryLevel": int(industry_level) if industry_level is not None else None,
         "profileSector": str(profile_sector).strip() if profile_sector else None,
-        "sectorSource": classification.get("sectorSource") or ("vnstock:Reference.company.info" if reference_record else f"vnstock:{'KBS' if overview_record else 'unknown'}"),
+        "sectorSource": "vnstock:Reference.company.info",
         "listingDate": pick("listing_date", "list_date", "listed_date"),
         "issuedShares": _numeric(pick("issued_share", "issued_shares", "shares_outstanding", "listed_share")),
-        "source": "vnstock:Reference.company.info+industry.sectors",
+        "source": "vnstock:Reference.company.info",
         "notes": errors[:5],
     }
 

@@ -40,4 +40,27 @@ describe("HttpJsonMarketDataProvider", () => {
       code: "DATA_SOURCE_CORS_UNSUPPORTED",
     })
   })
+  it("keeps unknown company exchange and sector as N/A instead of guessing", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      symbol: "TEST",
+      name: "N/A",
+      exchange: "N/A",
+      sector: "N/A",
+    }), { status: 200, headers: { "content-type": "application/json" } })))
+    const provider = new HttpJsonMarketDataProvider(config)
+    const company = await provider.getCompanyInfo("TEST")
+    expect(company.exchange).toBe("N/A")
+    expect(company.sector).toBe("N/A")
+  })
+
+  it("preserves upstream timeout details from the OHLCV endpoint", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "VNSTOCK_UPSTREAM_TIMEOUT",
+      error: "VNSTOCK_UPSTREAM_TIMEOUT: KBS OHLCV timed out for HAH",
+    }), { status: 502, headers: { "content-type": "application/json" } })))
+    const provider = new HttpJsonMarketDataProvider(config)
+
+    await expect(provider.getHistoricalPrices({ symbol: "HAH" })).rejects.toThrow("VNSTOCK_UPSTREAM_TIMEOUT")
+  })
+
 })
